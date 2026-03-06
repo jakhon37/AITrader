@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import numpy as np
 import pandas as pd
 
-from data.market_data import MarketDataManager
+from data.loaders.csv_loader import load_ohlcv_csv
 from features.feature_engine import FeatureEngine
 from models.ensemble import EnsembleModel
 from models.garch_gru import GARCHGRUModel
@@ -55,8 +55,7 @@ class ModelTrainer:
         np.random.seed(random_seed)
         
         # Initialize components
-        self.data_manager = MarketDataManager(base_path=str(self.data_dir))
-        self.feature_engine = FeatureEngine(config_path=config_path)
+        self.feature_engine = FeatureEngine()  # Use default config
         self.registry = ModelRegistry(base_path=registry_path)
         
         logger.info(f"Initialized trainer with config: {config_path}")
@@ -69,8 +68,12 @@ class ModelTrainer:
         """Load and prepare training data."""
         logger.info(f"Loading data for {symbol}")
         
-        # Load market data
-        data = self.data_manager.load_ohlcv(symbol, "daily")
+        # Load market data from CSV
+        csv_path = self.data_dir / f"{symbol}_daily.csv"
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Data file not found: {csv_path}")
+        
+        data = load_ohlcv_csv(csv_path)
         
         # Compute features
         logger.info("Computing features")
