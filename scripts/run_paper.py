@@ -19,6 +19,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from data.loaders.csv_loader import load_ohlcv_csv
+from data.loaders.live_data import LiveDataFetcher
 from execution.brokers.sim import SimBroker, OrderSide, OrderType
 from execution.engine import ExecutionEngine, ExecutionConfig
 from features.feature_engine import FeatureEngine
@@ -39,14 +40,24 @@ class PaperTrader:
         initial_capital: float = 100000,
         model_name: str = "lstm_transformer",
         symbols: list = None,
+        use_live_data: bool = True,
     ):
         """Initialize paper trader."""
         self.initial_capital = initial_capital
         self.model_name = model_name
         self.symbols = symbols or ["eurusd"]
+        self.use_live_data = use_live_data
 
         # Initialize components
         logger.info("Initializing paper trader...")
+
+        # Live data fetcher
+        if use_live_data:
+            self.live_fetcher = LiveDataFetcher(source="yfinance")
+            logger.info("✅ Using LIVE market data")
+        else:
+            self.live_fetcher = None
+            logger.info("ℹ️  Using historical CSV data")
 
         # Broker
         self.broker = SimBroker(initial_cash=initial_capital)
@@ -104,12 +115,23 @@ class PaperTrader:
     def fetch_data(self, symbol: str, lookback_days: int = 90) -> pd.DataFrame:
         """Fetch latest data for a symbol."""
         try:
+            # Use live data if enabled
+            if self.use_live_data and self.live_fetcher:
+                df = self.live_fetcher.fetch_latest(symbol, lookback_days)
+                
+                if not df.empty:
+                    logger.info(f"✅ Fetched {len(df)} days of LIVE data for {symbol}")
+                    return df
+                else:
+                    logger.warning(f"No live data for {symbol}, falling back to CSV")
+            
+            # Fallback to CSV
             df = load_ohlcv_csv(f"data/raw/{symbol}_daily.csv")
 
             # Take last N days
             df = df.tail(lookback_days).copy()
 
-            logger.info(f"✅ Fetched {len(df)} days of {symbol} data")
+            logger.info(f"✅ Fetched {len(df)} days of CSV data for {symbol}")
             return df
 
         except Exception as e:
@@ -292,12 +314,29 @@ def main():
         default=3600,
         help="Seconds between iterations (default: 3600 = 1 hour)",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        default=True,
+        help="Use live market data (default: True)",
+    )
+    parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Use historical CSV data instead of live",
+    )
 
     args = parser.parse_args()
 
+    # Determine if using live data
+    use_live_data = not args.no_live
+
     # Create trader
     trader = PaperTrader(
-        initial_capital=args.capital, model_name=args.model, symbols=args.symbols
+        initial_capital=args.capital, 
+        model_name=args.model, 
+        symbols=args.symbols,
+        use_live_data=use_live_data,
     )
 
     # Run

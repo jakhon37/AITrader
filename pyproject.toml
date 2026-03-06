@@ -57,6 +57,10 @@ viz = [
   "mplfinance>=0.12",
 ]
 
+live_data = [
+  "yfinance>=0.2",
+]
+
 dashboard = [
   "streamlit>=1.30",
   "streamlit-extras>=0.3",
