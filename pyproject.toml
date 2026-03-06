@@ -24,9 +24,9 @@ dependencies = [
   "pydantic>=2.0",
   "pydantic-settings>=2.0",
   "pyyaml>=6.0",
-  "pandas>=2.0",
-  "numpy<2,>=1.24",
-  "pandas-ta>=0.3.14b",
+  "pandas>=3.0",
+  "numpy>=2.0",
+  "pandas-ta>=0.4.67b0",
   "hmmlearn>=0.3.0",
   "scipy>=1.10",
 ]
@@ -45,7 +45,7 @@ ml = [
   "statsmodels>=0.14",
   "xgboost>=2.0",
   "lightgbm>=4.0",
-  "arch>=6.0",
+  "arch>=6.2",
 ]
 backtest = [
   "mlfinlab>=0.11",

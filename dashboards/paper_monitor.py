@@ -106,7 +106,7 @@ def plot_equity_curve(pnl_df, initial_capital=100000):
         height=400,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def plot_trade_pnl(pnl_df):
@@ -138,7 +138,7 @@ def plot_trade_pnl(pnl_df):
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def show_metrics(pnl_df, initial_capital=100000):
@@ -198,7 +198,7 @@ def show_recent_events(events, limit=10):
         )
 
     df = pd.DataFrame(event_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
 
 def show_event_stats(stats):
@@ -249,7 +249,7 @@ with st.sidebar:
 
     st.header("🎯 Quick Actions")
 
-    if st.button("🔄 Refresh Now", use_container_width=True):
+    if st.button("🔄 Refresh Now", width="stretch"):
         st.cache_data.clear()
         st.rerun()
 

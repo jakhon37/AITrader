@@ -88,7 +88,7 @@ def plot_ohlc(df, symbol):
         xaxis_rangeslider_visible=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def plot_volume(df):
@@ -119,7 +119,7 @@ def plot_volume(df):
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def plot_feature_timeseries(features, selected_features):
@@ -149,7 +149,7 @@ def plot_feature_timeseries(features, selected_features):
         hovermode="x unified",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def plot_correlation_heatmap(features):
@@ -187,7 +187,7 @@ def plot_correlation_heatmap(features):
         width=800,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def plot_feature_distribution(features, selected_feature):
@@ -214,7 +214,7 @@ def plot_feature_distribution(features, selected_feature):
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def show_feature_stats(features):
@@ -235,7 +235,7 @@ def show_feature_stats(features):
     stats["missing"] = numeric_features.isnull().sum()
     stats["missing_pct"] = (stats["missing"] / len(features)) * 100
 
-    st.dataframe(stats, use_container_width=True)
+    st.dataframe(stats, width="stretch")
 
 
 # Sidebar
