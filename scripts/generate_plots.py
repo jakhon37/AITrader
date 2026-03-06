@@ -18,6 +18,7 @@ from visualization.backtest_plots import (
     plot_monthly_returns_heatmap,
     plot_trade_analysis,
 )
+from visualization.report_generator import generate_html_report
 
 # Import run_backtest from the other script
 import importlib.util
@@ -96,8 +97,29 @@ def main():
         )
         print(f"✓ Trade analysis saved to {output_dir / f'{args.symbol}_{args.model}_trades.png'}")
 
+    # 6. Generate HTML report
+    plot_files = {
+        "equity_curve": output_dir / f"{args.symbol}_{args.model}_equity.png",
+        "drawdown": output_dir / f"{args.symbol}_{args.model}_drawdown.png",
+        "returns_dist": output_dir / f"{args.symbol}_{args.model}_returns_dist.png",
+        "monthly_heatmap": output_dir / f"{args.symbol}_{args.model}_monthly.png",
+    }
+    if len(result.trades) > 0:
+        plot_files["trade_analysis"] = output_dir / f"{args.symbol}_{args.model}_trades.png"
+
+    html_path = generate_html_report(
+        result,
+        metrics,
+        args.model,
+        args.symbol,
+        plot_files=plot_files,
+        output_path=output_dir / f"{args.symbol}_{args.model}_report.html",
+    )
+    print(f"✓ HTML report saved to {html_path}")
+
     print('='*70)
-    print(f"\nAll plots saved to: {output_dir}/")
+    print(f"\nAll plots and report saved to: {output_dir}/")
+    print(f"Open report in browser: file://{html_path.absolute()}")
     print('='*70 + '\n')
 
     if args.show:
