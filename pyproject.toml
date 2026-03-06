@@ -56,6 +56,11 @@ viz = [
   "seaborn>=0.12",
   "mplfinance>=0.12",
 ]
+
+dashboard = [
+  "streamlit>=1.30",
+  "streamlit-extras>=0.3",
+]
 broker = [
   "oanda-v20>=3.0",
   "requests>=2.28",
