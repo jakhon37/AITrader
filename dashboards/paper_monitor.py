@@ -5,6 +5,7 @@ Run with:
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,7 @@ from plotly.subplots import make_subplots
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from execution.audit_log import AuditLog, EventType
+from execution.audit_log import AuditLog
 
 
 # Page config
@@ -48,14 +49,17 @@ def parse_pnl_from_events(events):
     cumulative_pnl = 0.0
 
     for event in events:
-        if event.event_type == EventType.POSITION_CLOSE:
-            metadata = event.metadata or {}
+        # Handle dict format (from read_events)
+        event_type = event.get("event_type", "")
+        
+        if event_type == "position_close":
+            metadata = event.get("metadata", {})
             pnl = metadata.get("pnl", 0)
             cumulative_pnl += pnl
 
             pnl_data.append(
                 {
-                    "timestamp": event.timestamp,
+                    "timestamp": event.get("timestamp", ""),
                     "symbol": metadata.get("symbol", ""),
                     "pnl": pnl,
                     "cumulative_pnl": cumulative_pnl,
@@ -174,11 +178,22 @@ def show_recent_events(events, limit=10):
     # Convert to dataframe
     event_data = []
     for event in events[-limit:]:
+        # Handle dict format
+        timestamp = event.get("timestamp", "")
+        if timestamp:
+            try:
+                dt = datetime.fromisoformat(timestamp)
+                time_str = dt.strftime("%H:%M:%S")
+            except:
+                time_str = str(timestamp)
+        else:
+            time_str = ""
+            
         event_data.append(
             {
-                "Time": event.timestamp.strftime("%H:%M:%S"),
-                "Type": event.event_type.value,
-                "Message": event.message,
+                "Time": time_str,
+                "Type": event.get("event_type", ""),
+                "Message": event.get("message", ""),
             }
         )
 
