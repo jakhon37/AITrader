@@ -22,6 +22,8 @@ pip install -e ".[dev]"
 PYTHONPATH=src CONFIG_DIR=$(pwd)/config pytest tests -v
 ```
 
+**With real data:** Run `python scripts/download_sample_data.py` first to fetch EUR/USD, gold, etc. into `data/raw/`. Then `test_real_data_if_available` will validate those files.
+
 ### Config
 
 - Config lives in **`config/`**. Use `config/dev.yaml`, `config/staging.yaml`, or `config/prod.yaml`.

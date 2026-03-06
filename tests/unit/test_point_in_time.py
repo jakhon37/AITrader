@@ -78,3 +78,43 @@ def test_assert_no_future_leakage_raises() -> None:
     ts = pd.DatetimeIndex(["2020-01-01", "2020-01-03"])
     with pytest.raises(AssertionError, match="Future leakage"):
         assert_no_future_leakage(ts, pd.Timestamp("2020-01-02"))
+
+
+def test_slice_at_time_t_before_all_data(sample_series: pd.DataFrame) -> None:
+    """t before first row returns empty."""
+    t = pd.Timestamp("2019-12-31")
+    out = slice_at_time(sample_series, t, inclusive="left")
+    assert out.empty
+
+
+def test_slice_at_time_t_after_all_data(sample_series: pd.DataFrame) -> None:
+    """t after last row returns full series (left) or full (right)."""
+    t = pd.Timestamp("2020-01-10")
+    out_left = slice_at_time(sample_series, t, inclusive="left")
+    out_right = slice_at_time(sample_series, t, inclusive="right")
+    assert len(out_left) == 5
+    assert len(out_right) == 5
+
+
+def test_lookback_at_time_n_zero_returns_empty(sample_series: pd.DataFrame) -> None:
+    """n=0 returns empty DataFrame."""
+    t = pd.Timestamp("2020-01-05")
+    out = lookback_at_time(sample_series, t, n=0, inclusive="left")
+    assert out.empty
+
+
+def test_slice_at_time_does_not_mutate_original(sample_series: pd.DataFrame) -> None:
+    """slice_at_time returns copy; original unchanged."""
+    orig_len = len(sample_series)
+    t = pd.Timestamp("2020-01-03")
+    out = slice_at_time(sample_series, t, inclusive="left")
+    assert len(sample_series) == orig_len
+    assert len(out) == 2
+    assert out is not sample_series
+
+
+def test_slice_at_time_requires_datetime_index() -> None:
+    """Non-DatetimeIndex raises."""
+    df = pd.DataFrame({"close": [1.0]}, index=[0])
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        slice_at_time(df, pd.Timestamp("2020-01-01"))

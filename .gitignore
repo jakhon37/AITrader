@@ -42,6 +42,8 @@ data/
 checkpoints/
 *.csv
 *.parquet
+# Keep test fixtures
+!tests/fixtures/*.csv
 
 # Test and coverage
 .pytest_cache/

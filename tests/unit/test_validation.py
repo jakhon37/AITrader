@@ -105,3 +105,68 @@ def test_raw_ohlcv_schema_returns_dict() -> None:
     assert "index" in schema
     assert "columns" in schema
     assert "open" in schema["columns"]
+
+
+def test_validate_ohlcv_rejects_duplicate_timestamps() -> None:
+    """Duplicate index timestamps raise."""
+    df = pd.DataFrame(
+        {
+            "open": [1.0, 1.01],
+            "high": [1.02, 1.03],
+            "low": [0.99, 1.00],
+            "close": [1.01, 1.02],
+        },
+        index=pd.DatetimeIndex(["2020-01-01", "2020-01-01"]),
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_ohlcv(df)
+
+
+def test_validate_ohlcv_rejects_inf() -> None:
+    """Inf in OHLC raises."""
+    df = pd.DataFrame(
+        {
+            "open": [1.0],
+            "high": [float("inf")],
+            "low": [0.99],
+            "close": [1.01],
+        },
+        index=pd.DatetimeIndex(["2020-01-01"]),
+    )
+    with pytest.raises(ValueError, match="inf"):
+        validate_ohlcv(df)
+
+
+def test_validate_ohlcv_accepts_integer_ohlc() -> None:
+    """Integer OHLC (e.g. from some feeds) is valid."""
+    df = pd.DataFrame(
+        {
+            "open": [100],
+            "high": [102],
+            "low": [99],
+            "close": [101],
+        },
+        index=pd.DatetimeIndex(["2020-01-01"]),
+    )
+    validate_ohlcv(df)
+
+
+def test_validate_ohlcv_accepts_with_volume() -> None:
+    """OHLCV with volume passes."""
+    df = pd.DataFrame(
+        {
+            "open": [1.0],
+            "high": [1.02],
+            "low": [0.99],
+            "close": [1.01],
+            "volume": [100000],
+        },
+        index=pd.DatetimeIndex(["2020-01-01"]),
+    )
+    validate_ohlcv(df)
+
+
+def test_validate_ohlcv_rejects_non_dataframe() -> None:
+    """Non-DataFrame raises."""
+    with pytest.raises(ValueError, match="DataFrame"):
+        validate_ohlcv({"open": [1.0]})  # type: ignore[arg-type]
