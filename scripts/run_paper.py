@@ -41,20 +41,30 @@ class PaperTrader:
         model_name: str = "lstm_transformer",
         symbols: list = None,
         use_live_data: bool = True,
+        timeframe: str = "1d",
     ):
-        """Initialize paper trader."""
+        """Initialize paper trader.
+        
+        Args:
+            initial_capital: Starting capital
+            model_name: Name of model to use
+            symbols: List of symbols to trade
+            use_live_data: Whether to use live data
+            timeframe: Timeframe for data (1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo)
+        """
         self.initial_capital = initial_capital
         self.model_name = model_name
         self.symbols = symbols or ["eurusd"]
         self.use_live_data = use_live_data
+        self.timeframe = timeframe
 
         # Initialize components
         logger.info("Initializing paper trader...")
 
         # Live data fetcher
         if use_live_data:
-            self.live_fetcher = LiveDataFetcher(source="yfinance")
-            logger.info("✅ Using LIVE market data")
+            self.live_fetcher = LiveDataFetcher(source="yfinance", timeframe=timeframe)
+            logger.info(f"✅ Using LIVE market data (timeframe: {timeframe})")
         else:
             self.live_fetcher = None
             logger.info("ℹ️  Using historical CSV data")
@@ -315,6 +325,13 @@ def main():
         help="Seconds between iterations (default: 3600 = 1 hour)",
     )
     parser.add_argument(
+        "--timeframe",
+        type=str,
+        default="1d",
+        choices=["1m", "2m", "5m", "15m", "30m", "1h", "90m", "4h", "1d", "1w", "1mo"],
+        help="Data timeframe for analysis (default: 1d = daily)",
+    )
+    parser.add_argument(
         "--live",
         action="store_true",
         default=True,
@@ -337,6 +354,7 @@ def main():
         model_name=args.model, 
         symbols=args.symbols,
         use_live_data=use_live_data,
+        timeframe=args.timeframe,
     )
 
     # Run

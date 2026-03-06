@@ -77,6 +77,7 @@ nohup python scripts/run_paper.py \
     --capital $CAPITAL \
     --symbols $SYMBOLS \
     --interval $INTERVAL \
+    --timeframe $TIMEFRAME \
     $NO_LIVE \
     > logs/paper_trading.log 2>&1 &
 

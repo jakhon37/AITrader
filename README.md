@@ -2,6 +2,16 @@
 
 Industrial-standard algorithmic trading platform for Forex (EUR/USD, GBP/USD, USD/JPY) and Gold. Built in phases: data → features → models → backtest → execution → paper → live.
 
+## Features
+
+- **Multi-Timeframe Analysis**: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo timeframes
+- **Real-Time Live Data**: Yahoo Finance integration for live market data
+- **Paper Trading**: Realistic simulated trading with slippage & commissions
+- **Interactive Dashboards**: Streamlit-based real-time monitoring
+- **Hybrid AI Models**: LSTM + Transformer architecture
+- **Production-Ready**: Circuit breakers, risk management, audit logging
+- **Docker Support**: One-command containerized deployment
+
 ## Quick start
 
 ### Prerequisites
@@ -13,7 +23,44 @@ Industrial-standard algorithmic trading platform for Forex (EUR/USD, GBP/USD, US
 
 ```bash
 cd trading-platform
-pip install -e ".[dev]"
+pip install -e ".[dev,live_data,dashboard]"
+```
+
+### Paper Trading (New!)
+
+```bash
+# Start paper trading with live data (default: daily timeframe)
+./scripts/start_paper.sh
+
+# Different timeframes
+./scripts/start_paper.sh --timeframe 5m --interval 300   # 5-min scalping
+./scripts/start_paper.sh --timeframe 1h --interval 3600  # 1-hour intraday
+./scripts/start_paper.sh --timeframe 4h --interval 14400 # 4-hour position
+
+# Access dashboards
+open http://localhost:8501  # Paper monitor
+open http://localhost:8502  # Feature explorer
+
+# Stop services
+./scripts/stop_paper.sh
+
+# Check status
+./scripts/status_paper.sh
+```
+
+**See [docs/TIMEFRAMES.md](docs/TIMEFRAMES.md) for complete timeframe guide.**
+
+### Docker Deployment
+
+```bash
+# Build and start all services
+./docker/start_docker.sh --build
+
+# Check status
+./docker/status_docker.sh
+
+# Stop
+./docker/stop_docker.sh
 ```
 
 ### Run tests
@@ -50,6 +97,10 @@ See **MAIN-IMPLEMENTATION-PLAN.md** (in parent `pr1/` directory) for the full ro
 
 ## Docs
 
+- **[Quickstart: Paper Trading](QUICKSTART-PAPER-TRADING.md)** - Get started in 5 minutes
+- **[Multi-Timeframe Guide](docs/TIMEFRAMES.md)** - Complete timeframe reference
+- **[Go-Live Checklist](docs/go-live-checklist.md)** - Production deployment guide
+- **[Docker Deployment](docker/README.md)** - Containerized deployment
 - [ADR-001: Why CPCV](docs/ADR-001-cpcv.md)
 - [ADR-002: Config schema](docs/ADR-002-config.md)
 - [Data versioning](docs/data-versioning.md)
