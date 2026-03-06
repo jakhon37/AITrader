@@ -1,28 +1,36 @@
 {
   "models": {
     "garch_gru": [
-      "20260306_151122"
+      "20260306_151122",
+      "20260306_151425"
     ],
     "lstm_transformer": [
-      "20260306_151122"
+      "20260306_151122",
+      "20260306_151425"
     ]
   },
   "versions": {
     "garch_gru:20260306_151122": "metadata/garch_gru_20260306_151122.json",
-    "lstm_transformer:20260306_151122": "metadata/lstm_transformer_20260306_151122.json"
+    "lstm_transformer:20260306_151122": "metadata/lstm_transformer_20260306_151122.json",
+    "garch_gru:20260306_151425": "metadata/garch_gru_20260306_151425.json",
+    "lstm_transformer:20260306_151425": "metadata/lstm_transformer_20260306_151425.json"
   },
   "tags": {
     "volatility": [
-      "garch_gru:20260306_151122"
+      "garch_gru:20260306_151122",
+      "garch_gru:20260306_151425"
     ],
     "gru": [
-      "garch_gru:20260306_151122"
+      "garch_gru:20260306_151122",
+      "garch_gru:20260306_151425"
     ],
     "attention": [
-      "lstm_transformer:20260306_151122"
+      "lstm_transformer:20260306_151122",
+      "lstm_transformer:20260306_151425"
     ],
     "transformer": [
-      "lstm_transformer:20260306_151122"
+      "lstm_transformer:20260306_151122",
+      "lstm_transformer:20260306_151425"
     ]
   }
 }
