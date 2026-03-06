@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # Paper Trading Service
+  paper-trading:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aitrader-paper
+    command: python scripts/run_paper.py --capital 100000 --symbols eurusd --interval 3600
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - aitrader-net
+
+  # Paper Monitor Dashboard
+  monitor-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aitrader-monitor
+    command: streamlit run dashboards/paper_monitor.py --server.port 8501 --server.headless true
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_HEADLESS=true
+    depends_on:
+      - paper-trading
+    restart: unless-stopped
+    networks:
+      - aitrader-net
+
+  # Feature Explorer Dashboard
+  feature-explorer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aitrader-explorer
+    command: streamlit run dashboards/feature_explorer.py --server.port 8502 --server.headless true
+    ports:
+      - "8502:8502"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_HEADLESS=true
+    restart: unless-stopped
+    networks:
+      - aitrader-net
+
+networks:
+  aitrader-net:
+    driver: bridge
+
+volumes:
+  logs:
+  data:
+  models:

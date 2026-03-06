@@ -1,0 +1,58 @@
+# .dockerignore
+# Ignore unnecessary files for Docker builds
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Logs (will be mounted as volume)
+logs/*.log
+
+# Process IDs
+*.pid
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Tests (not needed in runtime)
+tests/
+.pytest_cache/
+
+# CI/CD
+.github/
+
+# Large data files (will be mounted as volume)
+data/raw/*.csv
+
+# Model files (will be mounted as volume)
+models/registry/models/*.pt
+
+# Reports
+reports/
