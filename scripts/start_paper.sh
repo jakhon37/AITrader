@@ -35,6 +35,7 @@ fi
 CAPITAL=${CAPITAL:-100000}
 SYMBOLS=${SYMBOLS:-"eurusd"}
 INTERVAL=${INTERVAL:-3600}
+TIMEFRAME=${TIMEFRAME:-"1d"}
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -48,6 +49,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --interval)
             INTERVAL="$2"
+            shift 2
+            ;;
+        --timeframe)
+            TIMEFRAME="$2"
             shift 2
             ;;
         --no-live)
@@ -65,6 +70,7 @@ echo -e "${GREEN}📊 Configuration:${NC}"
 echo "   Capital: \$$CAPITAL"
 echo "   Symbols: $SYMBOLS"
 echo "   Interval: ${INTERVAL}s"
+echo "   Timeframe: $TIMEFRAME"
 echo "   Data Source: ${NO_LIVE:+Historical CSV}${NO_LIVE:-Live Yahoo Finance}"
 echo ""
 
