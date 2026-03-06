@@ -1,0 +1,24 @@
+env: dev
+
+data:
+  symbols:
+    - EUR_USD
+  lookback_days: 365
+  data_dir: data
+  data_version: null
+
+model:
+  checkpoint_dir: checkpoints
+  ensemble_weights: {}
+  confidence_threshold: 0.55
+
+risk:
+  max_position_pct: 0.02
+  max_drawdown_pct: 0.15
+  daily_loss_limit_pct: 0.05
+  max_signals_per_day: 50
+
+execution:
+  broker: mock
+  slippage_pips: 0.5
+  rate_limit_per_min: 30

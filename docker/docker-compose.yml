@@ -1,0 +1,11 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      ENV: dev
+      CONFIG_DIR: /app/config
+    volumes:
+      - ../config:/app/config:ro
+    command: pytest tests -v

@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trading-platform
+  template:
+    metadata:
+      labels:
+        app: trading-platform
+    spec:
+      containers:
+        - name: app
+          image: trading-platform:latest
+          env:
+            - name: ENV
+              value: prod
+            - name: CONFIG_DIR
+              value: /app/config
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
