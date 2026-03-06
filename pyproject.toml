@@ -50,6 +50,12 @@ ml = [
 backtest = [
   "mlfinlab>=0.11",
 ]
+viz = [
+  "matplotlib>=3.7",
+  "plotly>=5.0",
+  "seaborn>=0.12",
+  "mplfinance>=0.12",
+]
 broker = [
   "oanda-v20>=3.0",
   "requests>=2.28",

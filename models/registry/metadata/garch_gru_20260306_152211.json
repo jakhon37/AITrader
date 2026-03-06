@@ -1,0 +1,17 @@
+{
+  "model_name": "garch_gru",
+  "version": "20260306_152211",
+  "registered_at": "2026-03-06T15:22:11.850780",
+  "model_path": "models/garch_gru/20260306_152211.pt",
+  "original_path": "models/temp/garch_gru_20260306_152211.pt",
+  "tags": [
+    "volatility",
+    "gru"
+  ],
+  "status": "dev",
+  "metrics": {
+    "directional_accuracy": 0.4673913043478261,
+    "final_train_loss": 1.563465730214375e-05
+  },
+  "trained_at": "20260306_152211"
+}
