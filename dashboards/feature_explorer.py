@@ -30,10 +30,14 @@ st.markdown("Explore market data, features, and correlations")
 
 
 @st.cache_data
-def load_data(symbol):
+def load_data(symbol, timeframe="1d"):
     """Load market data."""
     try:
-        df = load_ohlcv_csv(f"data/raw/{symbol}_daily.csv")
+        # Try timeframe-specific file first, fallback to daily
+        csv_filename = f"data/raw/{symbol}_{timeframe}.csv"
+        if not Path(csv_filename).exists():
+            csv_filename = f"data/raw/{symbol}_daily.csv"
+        df = load_ohlcv_csv(csv_filename)
         return df
     except Exception as e:
         st.error(f"Failed to load data: {e}")
@@ -41,10 +45,10 @@ def load_data(symbol):
 
 
 @st.cache_data
-def compute_features(symbol, lookback_days):
+def compute_features(symbol, lookback_days, timeframe="1d"):
     """Compute features for a symbol."""
     try:
-        df = load_data(symbol)
+        df = load_data(symbol, timeframe)
         if df.empty:
             return pd.DataFrame()
 
@@ -244,8 +248,15 @@ with st.sidebar:
 
     symbol = st.selectbox(
         "Symbol",
-        ["eurusd", "gbpusd", "usdjpy", "gold"],
+        ["eurusd", "gbpusd", "usdjpy", "gold", "btcusd"],
         index=0,
+    )
+
+    timeframe = st.selectbox(
+        "Timeframe",
+        ["1m", "5m", "15m", "30m", "1h", "1d"],
+        index=5,  # Default to 1d
+        help="Select data timeframe (1m requires recent downloaded data)"
     )
 
     lookback_days = st.slider(
@@ -256,19 +267,19 @@ with st.sidebar:
 
     st.header("🎯 Quick Stats")
 
-    data = load_data(symbol)
+    data = load_data(symbol, timeframe)
     if not data.empty:
-        st.metric("Total Days", len(data))
+        st.metric("Total Bars", len(data))
         st.metric("Latest Close", f"${data['close'].iloc[-1]:.4f}")
 
         returns = data["close"].pct_change()
-        st.metric("Daily Return", f"{returns.iloc[-1]:.2%}")
-        st.metric("Volatility (30d)", f"{returns.tail(30).std():.2%}")
+        st.metric(f"Last Return", f"{returns.iloc[-1]:.2%}")
+        st.metric("Volatility (30 bars)", f"{returns.tail(30).std():.2%}")
 
 
 # Main content
-features = compute_features(symbol, lookback_days)
-data = load_data(symbol).tail(lookback_days)
+features = compute_features(symbol, lookback_days, timeframe)
+data = load_data(symbol, timeframe).tail(lookback_days)
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["📈 Price Chart", "🔢 Features", "🔗 Correlations", "📊 Stats"])

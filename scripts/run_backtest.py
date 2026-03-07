@@ -22,15 +22,26 @@ logger = logging.getLogger(__name__)
 
 
 def load_model(model_type: str, model_version: str, registry: ModelRegistry):
-    """Load model from registry."""
+    """Load model from registry with GPU auto-detection."""
+    import torch
+    
+    # Auto-detect device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device_str = str(device)
+    
+    if torch.cuda.is_available():
+        logger.info(f"🎮 Using GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        logger.info("💻 Using CPU")
+    
     metadata = registry.get_metadata(model_type, model_version)
     model_path = registry.get_model_path(model_type, model_version)
 
     if model_type == "garch_gru":
-        model = GARCHGRUModel()
+        model = GARCHGRUModel(device=device_str)
         model.load(model_path)
     elif model_type == "lstm_transformer":
-        model = LSTMTransformerModel()
+        model = LSTMTransformerModel(device=device_str)
         model.load(model_path)
     else:
         raise ValueError(f"Unknown model: {model_type}")
@@ -40,14 +51,16 @@ def load_model(model_type: str, model_version: str, registry: ModelRegistry):
 
 
 def run_backtest(symbol, model_type, model_version, data_dir="data/raw", 
-                 registry_path="models/registry", backtest_config=None):
+                 registry_path="models/registry", backtest_config=None, timeframe="1d"):
     """Run backtest."""
-    logger.info(f"Backtest: {symbol} with {model_type}:{model_version}")
+    logger.info(f"Backtest: {symbol} with {model_type}:{model_version} on {timeframe} data")
 
-    # Load data
-    data_path = Path(data_dir) / f"{symbol}_daily.csv"
+    # Load data (support both daily and intraday)
+    data_path = Path(data_dir) / f"{symbol}_{timeframe}.csv"
+    if not data_path.exists():
+        data_path = Path(data_dir) / f"{symbol}_daily.csv"  # Fallback
     data = load_ohlcv_csv(data_path)
-    logger.info(f"Loaded {len(data)} bars")
+    logger.info(f"Loaded {len(data)} bars from {data_path.name}")
 
     # Features
     feature_engine = FeatureEngine()
@@ -98,8 +111,9 @@ def main():
     parser.add_argument("--symbol", default="eurusd")
     parser.add_argument("--model", default="lstm_transformer", 
                         choices=["garch_gru", "lstm_transformer"])
-    parser.add_argument("--model-version")
-    parser.add_argument("--all-models", action="store_true")
+    parser.add_argument("--model-version")    parser.add_argument("--timeframe", "-t", default="1d",
+                       choices=["1m", "5m", "15m", "30m", "1h", "1d"],
+                       help="Data timeframe (default: 1d)")    parser.add_argument("--all-models", action="store_true")
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     parser.add_argument("--commission", type=float, default=0.001)
     parser.add_argument("--slippage", type=float, default=0.0005)
@@ -139,7 +153,7 @@ def main():
     for model_type, version in models_to_run:
         try:
             _, metrics = run_backtest(args.symbol, model_type, version, 
-                                       backtest_config=config)
+                                       backtest_config=config, timeframe=args.timeframe)
             results.append({
                 "model": f"{model_type}:{version}",
                 "sharpe": metrics.sharpe_ratio,

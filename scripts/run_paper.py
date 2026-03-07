@@ -60,6 +60,14 @@ class PaperTrader:
 
         # Initialize components
         logger.info("Initializing paper trader...")
+        
+        # Detect GPU availability
+        import torch
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.cuda.is_available():
+            logger.info(f"🎮 GPU detected: {torch.cuda.get_device_name(0)}")
+        else:
+            logger.info("💻 Using CPU (no GPU detected)")
 
         # Live data fetcher
         if use_live_data:
@@ -92,28 +100,66 @@ class PaperTrader:
         logger.info(f"✅ Paper trader initialized: ${initial_capital:,.0f}")
 
     def _load_model(self):
-        """Load the best model from registry."""
+        """Load the best model from registry with GPU support."""
         try:
-            # Find latest model file
+            # Determine which symbol to match (use first symbol if multiple)
+            target_symbol = self.symbols[0] if self.symbols else "eurusd"
+            
+            # Try registry first
             model_dir = Path("models/registry/models") / self.model_name
-            if not model_dir.exists():
-                logger.error(f"Model directory not found: {model_dir}")
-                return None
-
-            model_files = sorted(model_dir.glob("*.pt"))
+            model_files = []
+            
+            if model_dir.exists():
+                model_files = sorted(model_dir.glob("*.pt"))
+                logger.info(f"Found {len(model_files)} models in registry: {model_dir}")
+            
+            # If no models in registry, or to include newer models, also check temp/
+            temp_dir = Path("models/temp")
+            if temp_dir.exists():
+                # Look for models matching the model_name pattern (including timeframe variants like _1m_)
+                temp_files = sorted(temp_dir.glob(f"{self.model_name}*.pt"))
+                if temp_files:
+                    logger.info(f"Found {len(temp_files)} models in temp: {temp_dir}")
+                    model_files.extend(temp_files)
+            
+            # Sort all files by name (timestamp) and use latest
             if not model_files:
-                logger.error(f"No model files found in {model_dir}")
+                logger.error(f"No model files found for {self.model_name} in registry or temp")
                 return None
 
+            # Filter by symbol and timeframe match if available
+            symbol_matches = [f for f in model_files if f"_{target_symbol}_" in f.name]
+            timeframe_matches = [f for f in model_files if f"_{self.timeframe}_" in f.name]
+            
+            # Priority: symbol + timeframe match > symbol match > timeframe match > any model
+            if symbol_matches and timeframe_matches:
+                candidates = [f for f in symbol_matches if f in timeframe_matches]
+                if candidates:
+                    model_files = candidates
+                    logger.info(f"✅ Found {len(candidates)} models matching {target_symbol} + {self.timeframe}")
+            elif symbol_matches:
+                model_files = symbol_matches
+                logger.info(f"✅ Found {len(symbol_matches)} models matching {target_symbol}")
+            elif timeframe_matches:
+                model_files = timeframe_matches
+                logger.info(f"✅ Found {len(timeframe_matches)} models matching {self.timeframe}")
+            else:
+                logger.warning(f"⚠️ No exact match for {target_symbol}/{self.timeframe}, using any {self.model_name} model")
+
+            model_files = sorted(model_files)  # Re-sort all together
             model_path = model_files[-1]  # Use latest
 
-            # Load model
-            from models.lstm_transformer import LSTMTransformer
+            # Load model with auto-detected device
+            if "garch" in self.model_name.lower():
+                from models.garch_gru import GARCHGRUModel
+                model = GARCHGRUModel(device=str(self.device))
+                model.load(str(model_path))
+            else:
+                from models.lstm_transformer import LSTMTransformerModel
+                model = LSTMTransformerModel(device=str(self.device))
+                model.load(str(model_path))
 
-            model = LSTMTransformer()
-            model.load(str(model_path))
-
-            logger.info(f"✅ Loaded model: {model_path.name}")
+            logger.info(f"✅ Loaded model: {model_path.name} on {self.device}")
             return model
 
         except Exception as e:
@@ -135,8 +181,11 @@ class PaperTrader:
                 else:
                     logger.warning(f"No live data for {symbol}, falling back to CSV")
             
-            # Fallback to CSV
-            df = load_ohlcv_csv(f"data/raw/{symbol}_daily.csv")
+            # Fallback to CSV (support both daily and intraday)
+            csv_filename = f"data/raw/{symbol}_{self.timeframe}.csv"
+            if not Path(csv_filename).exists():
+                csv_filename = f"data/raw/{symbol}_daily.csv"  # Fallback to daily
+            df = load_ohlcv_csv(csv_filename)
 
             # Take last N days
             df = df.tail(lookback_days).copy()

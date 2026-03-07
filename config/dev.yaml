@@ -2,15 +2,23 @@ env: dev
 
 data:
   symbols:
+    - BTC_USD      # Primary symbol (used as default in scripts)
     - EUR_USD
+    - GBP_USD
+    - USD_JPY
+    - GOLD
   lookback_days: 365
   data_dir: data
   data_version: null
+  timeframe: "1m"  # 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo
 
 model:
   checkpoint_dir: checkpoints
   ensemble_weights: {}
   confidence_threshold: 0.55
+  model_type: "lstm_transformer"  # lstm_transformer, garch_gru
+  batch_size: 256  # Optimized for GPU (RTX 4080: use 256-512)
+  epochs: 50  # Default training epochs
 
 risk:
   max_position_pct: 0.02

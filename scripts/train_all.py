@@ -54,6 +54,16 @@ class ModelTrainer:
         # Set random seeds
         np.random.seed(random_seed)
         
+        # Detect GPU availability
+        import torch
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"🎮 GPU detected: {gpu_name}")
+            logger.info(f"   CUDA version: {torch.version.cuda}")
+        else:
+            logger.info("💻 Using CPU (no GPU detected)")
+        
         # Initialize components
         self.feature_engine = FeatureEngine()  # Use default config
         self.registry = ModelRegistry(base_path=registry_path)
@@ -99,21 +109,22 @@ class ModelTrainer:
         
         return features_train, features_test, target_train, target_test
 
-    def train_garch_gru(self, target_train, target_test, epochs=50):
+    def train_garch_gru(self, target_train, target_test, epochs=50, batch_size=256):
         """Train GARCH-GRU model."""
         logger.info("Training GARCH-GRU model")
+        logger.info(f"   Batch size: {batch_size}")
         
         model = GARCHGRUModel(
             hidden_size=64,
             num_layers=2,
             learning_rate=0.001,
-            device='cpu',
+            device=str(self.device),  # Auto-detect GPU
         )
         
         history = model.fit(
             target_train,
             epochs=epochs,
-            batch_size=32,
+            batch_size=batch_size,
             seq_length=20,
             validation_split=0.2,
             verbose=True,
@@ -134,9 +145,10 @@ class ModelTrainer:
         
         return model, metrics
 
-    def train_lstm_transformer(self, features_train, features_test, target_train, target_test, epochs=50):
+    def train_lstm_transformer(self, features_train, features_test, target_train, target_test, epochs=50, batch_size=256):
         """Train LSTM-Transformer model."""
         logger.info("Training LSTM-Transformer model")
+        logger.info(f"   Batch size: {batch_size}")
         
         model = LSTMTransformerModel(
             hidden_size=128,
@@ -144,14 +156,14 @@ class ModelTrainer:
             num_transformer_layers=2,
             num_heads=4,
             learning_rate=0.001,
-            device='cpu',
+            device=str(self.device),  # Auto-detect GPU
         )
         
         history = model.fit(
             features_train,
             target_train,
             epochs=epochs,
-            batch_size=32,
+            batch_size=batch_size,
             seq_length=20,
             validation_split=0.2,
             verbose=True,
@@ -172,7 +184,7 @@ class ModelTrainer:
         
         return model, metrics
 
-    def save_models(self, garch_gru, lstm_transformer, garch_metrics, lstm_metrics):
+    def save_models(self, garch_gru, lstm_transformer, garch_metrics, lstm_metrics, symbol="eurusd"):
         """Save models to registry."""
         logger.info("Saving models to registry")
         
@@ -183,7 +195,7 @@ class ModelTrainer:
         temp_dir.mkdir(parents=True, exist_ok=True)
         
         # Save GARCH-GRU
-        garch_path = temp_dir / f"garch_gru_{timestamp}.pt"
+        garch_path = temp_dir / f"garch_gru_{symbol}_1d_{timestamp}.pt"
         garch_gru.save(str(garch_path))
         
         self.registry.register_model(
@@ -194,7 +206,7 @@ class ModelTrainer:
         )
         
         # Save LSTM-Transformer
-        lstm_path = temp_dir / f"lstm_transformer_{timestamp}.pt"
+        lstm_path = temp_dir / f"lstm_transformer_{symbol}_1d_{timestamp}.pt"
         lstm_transformer.save(str(lstm_path))
         
         self.registry.register_model(
@@ -206,23 +218,27 @@ class ModelTrainer:
         
         logger.info(f"Models saved with timestamp: {timestamp}")
 
-    def run_full_training(self, symbol="eurusd", epochs=50):
+    def run_full_training(self, symbol="eurusd", epochs=50, batch_size=256):
         """Run full training pipeline."""
         logger.info("=" * 60)
         logger.info("Starting full training pipeline")
         logger.info("=" * 60)
+        logger.info(f"Batch size: {batch_size} {'(GPU-optimized)' if batch_size >= 128 else '(small)'}")
         
         # Load data
         features_train, features_test, target_train, target_test = self.load_and_prepare_data(symbol)
         
         # Train models
-        garch_gru, garch_metrics = self.train_garch_gru(target_train, target_test, epochs)
+        garch_gru, garch_metrics = self.train_garch_gru(
+            target_train, target_test, epochs=epochs, batch_size=batch_size
+        )
         lstm_transformer, lstm_metrics = self.train_lstm_transformer(
-            features_train, features_test, target_train, target_test, epochs
+            features_train, features_test, target_train, target_test, 
+            epochs=epochs, batch_size=batch_size
         )
         
         # Save models
-        self.save_models(garch_gru, lstm_transformer, garch_metrics, lstm_metrics)
+        trainer.save_models(garch_gru, lstm_transformer, garch_metrics, lstm_metrics, symbol=symbol)
         
         # Print summary
         logger.info("=" * 60)
@@ -238,6 +254,13 @@ def main():
     parser = argparse.ArgumentParser(description="Train all models")
     parser.add_argument('--symbol', type=str, default='eurusd', help='Symbol to train on')
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
+    parser.add_argument(
+        '--batch-size',
+        '-b',
+        type=int,
+        default=256,
+        help='Batch size - larger is faster on GPU (default: 256, try 512-1024)'
+    )
     parser.add_argument('--config', type=str, default='config/features.yaml', help='Feature config')
     parser.add_argument('--data-dir', type=str, default='data/raw', help='Data directory')
     parser.add_argument('--registry', type=str, default='models/registry', help='Model registry')
@@ -250,7 +273,7 @@ def main():
         registry_path=args.registry,
     )
     
-    trainer.run_full_training(symbol=args.symbol, epochs=args.epochs)
+    trainer.run_full_training(symbol=args.symbol, epochs=args.epochs, batch_size=args.batch_size)
 
 
 if __name__ == '__main__':

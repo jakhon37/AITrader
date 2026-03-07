@@ -4,13 +4,15 @@
       "20260306_151122",
       "20260306_151425",
       "20260306_151812",
-      "20260306_152211"
+      "20260306_152211",
+      "20260307_094846"
     ],
     "lstm_transformer": [
       "20260306_151122",
       "20260306_151425",
       "20260306_151812",
-      "20260306_152211"
+      "20260306_152211",
+      "20260307_094846"
     ]
   },
   "versions": {
@@ -21,32 +23,38 @@
     "garch_gru:20260306_151812": "metadata/garch_gru_20260306_151812.json",
     "lstm_transformer:20260306_151812": "metadata/lstm_transformer_20260306_151812.json",
     "garch_gru:20260306_152211": "metadata/garch_gru_20260306_152211.json",
-    "lstm_transformer:20260306_152211": "metadata/lstm_transformer_20260306_152211.json"
+    "lstm_transformer:20260306_152211": "metadata/lstm_transformer_20260306_152211.json",
+    "garch_gru:20260307_094846": "metadata/garch_gru_20260307_094846.json",
+    "lstm_transformer:20260307_094846": "metadata/lstm_transformer_20260307_094846.json"
   },
   "tags": {
     "volatility": [
       "garch_gru:20260306_151122",
       "garch_gru:20260306_151425",
       "garch_gru:20260306_151812",
-      "garch_gru:20260306_152211"
+      "garch_gru:20260306_152211",
+      "garch_gru:20260307_094846"
     ],
     "gru": [
       "garch_gru:20260306_151122",
       "garch_gru:20260306_151425",
       "garch_gru:20260306_151812",
-      "garch_gru:20260306_152211"
+      "garch_gru:20260306_152211",
+      "garch_gru:20260307_094846"
     ],
     "attention": [
       "lstm_transformer:20260306_151122",
       "lstm_transformer:20260306_151425",
       "lstm_transformer:20260306_151812",
-      "lstm_transformer:20260306_152211"
+      "lstm_transformer:20260306_152211",
+      "lstm_transformer:20260307_094846"
     ],
     "transformer": [
       "lstm_transformer:20260306_151122",
       "lstm_transformer:20260306_151425",
       "lstm_transformer:20260306_151812",
-      "lstm_transformer:20260306_152211"
+      "lstm_transformer:20260306_152211",
+      "lstm_transformer:20260307_094846"
     ]
   }
 }

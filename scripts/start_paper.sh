@@ -1,6 +1,27 @@
 #!/bin/bash
 # AITrader Paper Trading Launcher
 # Starts paper trading + dashboards for real-time simulation
+#
+# Usage:
+#   ./scripts/start_paper.sh [OPTIONS]
+#
+# Options:
+#   --capital AMOUNT      Initial capital (default: 100000)
+#   --symbols SYMBOLS     Comma-separated symbols (default: eurusd)
+#   --model MODEL         Model to use: lstm_transformer, garch_gru (default: lstm_transformer)
+#   --interval SECONDS    Update interval in seconds (default: 3600)
+#   --timeframe FRAME     Data timeframe: 1m, 5m, 15m, 30m, 1h, 1d (default: 1d)
+#   --no-live             Use CSV data instead of live Yahoo Finance
+#
+# Examples:
+#   # Default daily trading with LSTM-Transformer model
+#   ./scripts/start_paper.sh
+#
+#   # Intraday BTC 1-minute trading with latest 1m model
+#   ./scripts/start_paper.sh --symbols btcusd --timeframe 1m --interval 60 --model lstm_transformer
+#
+#   # GARCH-GRU model with multiple symbols
+#   ./scripts/start_paper.sh --model garch_gru --symbols eurusd,gbpusd,gold
 
 set -e
 
@@ -36,6 +57,7 @@ CAPITAL=${CAPITAL:-100000}
 SYMBOLS=${SYMBOLS:-"eurusd"}
 INTERVAL=${INTERVAL:-3600}
 TIMEFRAME=${TIMEFRAME:-"1d"}
+MODEL=${MODEL:-"lstm_transformer"}  # Default to lstm_transformer (options: lstm_transformer, garch_gru)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -55,6 +77,10 @@ while [[ $# -gt 0 ]]; do
             TIMEFRAME="$2"
             shift 2
             ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
         --no-live)
             NO_LIVE="--no-live"
             shift
@@ -69,6 +95,7 @@ done
 echo -e "${GREEN}📊 Configuration:${NC}"
 echo "   Capital: \$$CAPITAL"
 echo "   Symbols: $SYMBOLS"
+echo "   Model: $MODEL"
 echo "   Interval: ${INTERVAL}s"
 echo "   Timeframe: $TIMEFRAME"
 echo "   Data Source: ${NO_LIVE:+Historical CSV}${NO_LIVE:-Live Yahoo Finance}"
@@ -81,6 +108,7 @@ mkdir -p logs
 echo -e "${YELLOW}1. Starting paper trading...${NC}"
 nohup python scripts/run_paper.py \
     --capital $CAPITAL \
+    --model $MODEL \
     --symbols $SYMBOLS \
     --interval $INTERVAL \
     --timeframe $TIMEFRAME \

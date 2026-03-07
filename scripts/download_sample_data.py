@@ -23,6 +23,7 @@ SYMBOLS = {
     "gbpusd": "GBPUSD=X",
     "usdjpy": "USDJPY=X",
     "gold": "GLD",
+    "btcusd": "BTC-USD",
 }
 
 

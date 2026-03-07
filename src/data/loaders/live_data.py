@@ -26,6 +26,8 @@ class LiveDataFetcher:
         "usdjpy": "USDJPY=X",
         "gold": "GC=F",  # Gold futures
         "xauusd": "GC=F",  # Gold alternative
+        "btcusd": "BTC-USD",  # Bitcoin
+        "btc": "BTC-USD",  # Bitcoin alternative
     }
     
     # Timeframe mapping: human-readable -> yfinance interval
