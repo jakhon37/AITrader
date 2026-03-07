@@ -75,8 +75,12 @@ class MetaLabeler:
             threshold: Minimum return to consider "correct"
 
         Returns:
-            Binary array of meta-labels
+            Binary array of meta-labels (1D)
         """
+        # Ensure arrays are 1D
+        primary_predictions = np.asarray(primary_predictions).ravel()
+        actual_returns = np.asarray(actual_returns).ravel()
+        
         # Check if primary prediction direction matches actual return direction
         same_sign = np.sign(primary_predictions) == np.sign(actual_returns)
         
@@ -106,6 +110,10 @@ class MetaLabeler:
         Returns:
             Self for chaining
         """
+        # Ensure arrays are 1D
+        primary_predictions = np.asarray(primary_predictions).ravel()
+        actual_returns = np.asarray(actual_returns).ravel()
+        
         # Create meta-labels
         meta_labels = self.create_meta_labels(
             primary_predictions,
@@ -121,8 +129,8 @@ class MetaLabeler:
         # Scale features
         X_scaled = self.scaler.fit_transform(X)
         
-        # Train classifier
-        self.classifier.fit(X_scaled, meta_labels)
+        # Train classifier - ensure meta_labels is 1D
+        self.classifier.fit(X_scaled, meta_labels.ravel())
         
         self.is_fitted = True
         return self
@@ -143,6 +151,9 @@ class MetaLabeler:
         """
         if not self.is_fitted:
             raise ValueError("MetaLabeler must be fitted before prediction")
+        
+        # Ensure arrays are 1D
+        primary_predictions = np.asarray(primary_predictions).ravel()
         
         # Combine features with primary prediction
         X = features.copy()
@@ -187,6 +198,9 @@ class MetaLabeler:
         Returns:
             Array of position sizes (0 to 1)
         """
+        # Ensure arrays are 1D
+        primary_predictions = np.asarray(primary_predictions).ravel()
+        
         # Get probabilities
         probas = self.predict_proba(features, primary_predictions)
         
@@ -234,6 +248,9 @@ class MetaLabeler:
             - signals: Direction of trade (-1, 0, 1)
             - sizes: Position size (0 to 1)
         """
+        # Ensure arrays are 1D
+        primary_predictions = np.asarray(primary_predictions).ravel()
+        
         # Get position sizes
         sizes = self.predict_position_size(features, primary_predictions, strategy)
         

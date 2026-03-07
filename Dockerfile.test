@@ -1,0 +1,37 @@
+# Test Dockerfile with latest versions
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    gcc \
+    g++ \
+    gfortran \
+    libopenblas-dev \
+    liblapack-dev \
+    pkg-config \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml .
+COPY README.md .
+COPY src/ src/
+
+# Copy full project
+COPY scripts/ scripts/
+COPY dashboards/ dashboards/
+COPY config/ config/
+COPY data/ data/
+COPY models/ models/
+
+# Test: Install with latest versions (no constraints)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -e ".[live_data,dashboard,ml,viz]"
+
+# Test if imports work
+RUN python -c "import pandas; import numpy; import pandas_ta; import torch; import sklearn; print(f'✅ pandas={pandas.__version__}, numpy={numpy.__version__}')"

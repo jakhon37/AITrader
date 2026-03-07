@@ -4,7 +4,35 @@ Run AITrader in Docker containers for easy deployment and isolation.
 
 ---
 
-## 🚀 Quick Start
+## � Two Modes Available
+
+### 🔧 Development Mode (Local Code Mounted)
+Use **docker_dev_*.sh** scripts for development with local code mounted:
+- Edit code locally, changes appear instantly in Docker
+- No rebuild needed after code changes
+- Perfect for testing and development
+
+**Quick Start:**
+```bash
+./docker/docker_dev_build.sh      # Build once
+./docker/docker_dev_test.sh       # Run tests
+./docker/docker_dev_shell.sh      # Interactive shell
+./docker/docker_dev_paper.sh      # Paper trading
+```
+
+**See [DOCKER-DEV-GUIDE.md](DOCKER-DEV-GUIDE.md) for complete development guide.**
+
+---
+
+### 🚀 Production Mode (docker-compose)
+Use **start_docker.sh/stop_docker.sh** for production deployment:
+- Multi-service orchestration
+- Background services with auto-restart
+- Production-ready configuration
+
+---
+
+## 🚀 Production Quick Start
 
 ```bash
 # Build and start all services

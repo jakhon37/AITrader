@@ -156,9 +156,9 @@ class WalkForwardValidator:
         win_rates = [w.metrics.win_rate for w in windows]
         total_trades = [w.metrics.total_trades for w in windows]
 
-        combined_equity = pd.Series(dtype=float)
-        for window in windows:
-            combined_equity = pd.concat([combined_equity, window.result.equity_curve])
+        # Collect all equity curves and concatenate at once to avoid FutureWarning
+        equity_curves = [window.result.equity_curve for window in windows]
+        combined_equity = pd.concat(equity_curves) if equity_curves else pd.Series(dtype=float)
 
         total_return = (
             combined_equity.iloc[-1] - combined_equity.iloc[0]

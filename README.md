@@ -50,6 +50,29 @@ open http://localhost:8502  # Feature explorer
 
 **See [docs/TIMEFRAMES.md](docs/TIMEFRAMES.md) for complete timeframe guide.**
 
+### Docker Development (New! 🐳)
+
+Use Docker environment with local code for development:
+
+```bash
+# Build image (first time only)
+./docker/docker_dev_build.sh
+
+# Run tests in Docker
+./docker/docker_dev_test.sh
+
+# Interactive shell
+./docker/docker_dev_shell.sh
+
+# Paper trading
+./docker/docker_dev_paper.sh --capital 100000
+
+# Start dashboards
+./docker/docker_dev_dashboards.sh
+```
+
+**See [docker/DOCKER-DEV-GUIDE.md](docker/DOCKER-DEV-GUIDE.md) for complete Docker development guide.**
+
 ### Docker Deployment
 
 ```bash

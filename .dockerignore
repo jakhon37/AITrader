@@ -1,5 +1,17 @@
 # .dockerignore
-# Ignore unnecessary files for Docker builds
+# Ignore everything except pyproject.toml to keep image small
+# Project files are mounted at runtime by docker_dev_*.sh scripts
+
+*
+!pyproject.toml
+
+# Explicitly ignore these
+.git/
+.gitignore
+.dockerignore
+Dockerfile*
+docker-compose.yml
+docker/
 
 # Python
 __pycache__/
@@ -27,7 +39,13 @@ ENV/
 .gitignore
 
 # Logs (will be mounted as volume)
-logs/*.log
+logs/
+*.log
+
+# Data and models (will be mounted as volumes)
+data/
+models/
+reports/
 
 # Process IDs
 *.pid
@@ -39,14 +57,21 @@ logs/*.log
 # Documentation
 docs/
 *.md
-!README.md
 
-# Tests (not needed in runtime)
+# Tests
 tests/
 .pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
 
 # CI/CD
 .github/
+
+# Cache
+.ruff_cache/
+.mypy_cache/
 
 # Large data files (will be mounted as volume)
 data/raw/*.csv

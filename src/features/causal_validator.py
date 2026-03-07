@@ -36,8 +36,11 @@ def granger_causality(
         return {"is_causal": False, "reason": "insufficient_data"}
 
     try:
-        # Run Granger causality test
-        results = grangercausalitytests(df[["target", "feature"]], maxlag=max_lag, verbose=False)
+        # Run Granger causality test (verbose parameter removed as it's deprecated)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            results = grangercausalitytests(df[["target", "feature"]], maxlag=max_lag)
 
         # Check if any lag shows causality
         is_causal = False

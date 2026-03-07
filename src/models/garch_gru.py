@@ -125,15 +125,44 @@ class GARCHGRUModel:
         self.feature_mean: Optional[np.ndarray] = None
         self.feature_std: Optional[np.ndarray] = None
 
-    def fit_garch(self, returns: pd.Series) -> np.ndarray:
+    def fit_garch(self, returns: pd.Series | pd.DataFrame) -> np.ndarray:
         """Fit GARCH model and get volatility forecasts.
 
         Args:
-            returns: Return series
+            returns: Return series or DataFrame (if DataFrame, extracts returns column)
 
         Returns:
             Array of volatility forecasts
         """
+        # Handle DataFrame input - extract returns column
+        if isinstance(returns, pd.DataFrame):
+            # Try to find a returns column
+            returns_cols = [col for col in returns.columns if 'return' in col.lower()]
+            if returns_cols:
+                # Use the first returns column (typically 'return_1' or 'log_return_1')
+                returns = returns[returns_cols[0]]
+            else:
+                # If no returns column, compute from close price if available
+                if 'close' in returns.columns:
+                    returns = returns['close'].pct_change()
+                else:
+                    raise ValueError("DataFrame must contain a returns column or 'close' column")
+        
+        # Ensure returns is 1D Series
+        if isinstance(returns, pd.DataFrame):
+            returns = returns.squeeze()
+        elif isinstance(returns, np.ndarray):
+            returns = pd.Series(np.asarray(returns).ravel())
+        
+        if not isinstance(returns, pd.Series):
+            returns = pd.Series(returns)
+        
+        # Remove NaN values
+        returns = returns.dropna()
+        
+        if len(returns) < 10:
+            raise ValueError(f"Need at least 10 observations for GARCH, got {len(returns)}")
+        
         # Fit GARCH(1,1) model
         garch = arch_model(returns * 100, vol='Garch', p=1, q=1, rescale=False)
         garch_fit = garch.fit(disp='off')
@@ -265,13 +294,13 @@ class GARCHGRUModel:
 
     def predict(
         self,
-        returns: pd.Series,
+        returns: pd.Series | pd.DataFrame,
         seq_length: int = 20,
     ) -> np.ndarray:
         """Make predictions.
 
         Args:
-            returns: Return series
+            returns: Return series or DataFrame (if DataFrame, extracts returns column)
             seq_length: Sequence length (must match training)
 
         Returns:
@@ -279,6 +308,24 @@ class GARCHGRUModel:
         """
         if self.model is None:
             raise ValueError("Model must be fitted before prediction")
+        
+        # Handle DataFrame input - extract returns column
+        if isinstance(returns, pd.DataFrame):
+            # Try to find a returns column
+            returns_cols = [col for col in returns.columns if 'return' in col.lower()]
+            if returns_cols:
+                # Use the first returns column (typically 'return_1' or 'log_return_1')
+                returns = returns[returns_cols[0]]
+            else:
+                # If no returns column, compute from close price if available
+                if 'close' in returns.columns:
+                    returns = returns['close'].pct_change()
+                else:
+                    raise ValueError("DataFrame must contain a returns column or 'close' column")
+        
+        # Ensure returns is a Series
+        if isinstance(returns, pd.DataFrame):
+            returns = returns.squeeze()
         
         # Fit GARCH and get volatility
         volatility = self.fit_garch(returns)
