@@ -46,8 +46,19 @@ class LiveDataFetcher:
         "1mo": "1mo",    # 1 month
     }
     
-    # Maximum lookback periods for intraday data (yfinance limitation: 60 days for intraday)
-    MAX_INTRADAY_DAYS = 59
+    # Yahoo Finance API limits per timeframe (max days of historical data)
+    TIMEFRAME_LIMITS = {
+        "1m": 7,      # 1-minute: 7 days max
+        "2m": 7,      # 2-minute: 7 days max
+        "5m": 59,     # 5-minute: 59 days max
+        "15m": 59,    # 15-minute: 59 days max
+        "30m": 59,    # 30-minute: 59 days max
+        "60m": 729,   # 60-minute: 729 days max (2 years)
+        "90m": 59,    # 90-minute: 59 days max
+        "1h": 729,    # 1-hour: 729 days max (2 years)
+        "4h": 729,    # 4-hour: use 1h limit
+    }
+    MAX_INTRADAY_DAYS = 59  # Default fallback
 
     def __init__(self, source: str = "yfinance", timeframe: str = "1d"):
         """Initialize live data fetcher.
@@ -94,10 +105,11 @@ class LiveDataFetcher:
             end_date = datetime.now()
             
             if is_intraday:
-                # Intraday data limited to 60 days
-                max_days = min(lookback_days, self.MAX_INTRADAY_DAYS)
+                # Apply timeframe-specific limits from Yahoo Finance API
+                timeframe_limit = self.TIMEFRAME_LIMITS.get(self.timeframe, self.MAX_INTRADAY_DAYS)
+                max_days = min(lookback_days, timeframe_limit)
                 start_date = end_date - timedelta(days=max_days)
-                logger.info(f"Intraday timeframe: limited to {max_days} days")
+                logger.info(f"Intraday timeframe {self.timeframe}: limited to {max_days} days (API max: {timeframe_limit})")
             else:
                 start_date = end_date - timedelta(days=lookback_days + 10)  # Buffer
 
@@ -151,8 +163,10 @@ class LiveDataFetcher:
                 data["timestamp"] = pd.to_datetime(data["timestamp"])
                 data = data.set_index("timestamp")
 
+            # Log with appropriate unit (bars for intraday, days for daily+)
+            unit = "bars" if is_intraday else "days"
             logger.info(
-                f"✅ Fetched {len(data)} days of live data for {symbol} "
+                f"✅ Fetched {len(data)} {unit} of live data for {symbol} "
                 f"(latest: {data.index[-1]}, close: ${data['close'].iloc[-1]:.4f})"
             )
 

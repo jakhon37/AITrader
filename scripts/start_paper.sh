@@ -52,12 +52,19 @@ if [ -f .paper_trading.pid ]; then
     fi
 fi
 
-# Parse arguments
+# Load defaults from config if available
+if [ -f "config/dev.yaml" ]; then
+    CONFIG_SYMBOL=$(grep -A 1 "symbols:" config/dev.yaml | grep -v "symbols:" | head -1 | sed 's/.*- //;s/_//g' | tr '[:upper:]' '[:lower:]' | xargs)
+    CONFIG_TIMEFRAME=$(grep "timeframe:" config/dev.yaml | sed 's/.*timeframe: "\(.*\)".*/\1/')
+    CONFIG_MODEL=$(grep "model_type:" config/dev.yaml | sed 's/.*model_type: "\(.*\)".*/\1/')
+fi
+
+# Parse arguments (use config defaults if available)
 CAPITAL=${CAPITAL:-100000}
-SYMBOLS=${SYMBOLS:-"eurusd"}
+SYMBOLS=${SYMBOLS:-"${CONFIG_SYMBOL:-btcusd}"}
 INTERVAL=${INTERVAL:-3600}
-TIMEFRAME=${TIMEFRAME:-"1d"}
-MODEL=${MODEL:-"lstm_transformer"}  # Default to lstm_transformer (options: lstm_transformer, garch_gru)
+TIMEFRAME=${TIMEFRAME:-"${CONFIG_TIMEFRAME:-1d}"}
+MODEL=${MODEL:-"${CONFIG_MODEL:-lstm_transformer}"}  # Default from config or lstm_transformer
 
 while [[ $# -gt 0 ]]; do
     case $1 in

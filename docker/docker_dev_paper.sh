@@ -12,11 +12,19 @@ echo "🧹 Stopping any existing paper trading containers..."
 docker stop aitrader-paper aitrader-dev-paper 2>/dev/null || true
 echo ""
 
-# Default values
+# Load defaults from config if available
+if [ -f "$PROJECT_DIR/config/dev.yaml" ]; then
+    CONFIG_SYMBOL=$(grep -A 1 "symbols:" "$PROJECT_DIR/config/dev.yaml" | grep -v "symbols:" | head -1 | sed 's/.*- //;s/_//g' | tr '[:upper:]' '[:lower:]' | xargs)
+    CONFIG_TIMEFRAME=$(grep "timeframe:" "$PROJECT_DIR/config/dev.yaml" | sed 's/.*timeframe: "\(.*\)".*/\1/')
+    CONFIG_MODEL=$(grep "model_type:" "$PROJECT_DIR/config/dev.yaml" | sed 's/.*model_type: "\(.*\)".*/\1/')
+fi
+
+# Default values (use config if available)
 CAPITAL="${CAPITAL:-100000}"
-SYMBOLS="${SYMBOLS:-eurusd}"
+SYMBOLS="${SYMBOLS:-${CONFIG_SYMBOL:-btcusd}}"
 INTERVAL="${INTERVAL:-3600}"
-TIMEFRAME="${TIMEFRAME:-1d}"
+TIMEFRAME="${TIMEFRAME:-${CONFIG_TIMEFRAME:-1d}}"
+MODEL="${MODEL:-${CONFIG_MODEL:-lstm_transformer}}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -37,13 +45,17 @@ while [[ $# -gt 0 ]]; do
             TIMEFRAME="$2"
             shift 2
             ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
         --no-live)
             NO_LIVE="--no-live"
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--capital N] [--symbols 'sym1 sym2'] [--interval N] [--timeframe TF] [--no-live]"
+            echo "Usage: $0 [--capital N] [--symbols 'sym1 sym2'] [--interval N] [--timeframe TF] [--model MODEL] [--no-live]"
             exit 1
             ;;
     esac
@@ -53,6 +65,7 @@ echo "📈 Starting paper trading in Docker..."
 echo "📁 Project directory: $PROJECT_DIR"
 echo "💰 Capital: \$$CAPITAL"
 echo "📊 Symbols: $SYMBOLS"
+echo "🤖 Model: $MODEL"
 echo "⏱️  Interval: ${INTERVAL}s"
 echo "📅 Timeframe: $TIMEFRAME"
 echo ""
@@ -73,6 +86,7 @@ docker run -it --rm \
     aitrader-dev:latest \
     python scripts/run_paper.py \
         --capital "$CAPITAL" \
+        --model "$MODEL" \
         --symbols "$SYMBOLS" \
         --interval "$INTERVAL" \
         --timeframe "$TIMEFRAME" \

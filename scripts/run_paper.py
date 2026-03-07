@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -176,7 +177,18 @@ class PaperTrader:
                 df = self.live_fetcher.fetch_latest(symbol, lookback_days)
                 
                 if not df.empty:
-                    logger.info(f"✅ Fetched {len(df)} days of LIVE data for {symbol}")
+                    # Ensure datetime index for feature computation
+                    if 'timestamp' in df.columns:
+                        df = df.set_index('timestamp')
+                    elif not isinstance(df.index, pd.DatetimeIndex):
+                        # Try to convert index to datetime if it's not already
+                        try:
+                            df.index = pd.to_datetime(df.index)
+                        except:
+                            logger.warning(f"Could not convert index to DatetimeIndex for {symbol}")
+                    
+                    unit = "bars" if self.timeframe != "1d" else "days"
+                    logger.info(f"✅ Fetched {len(df)} {unit} of LIVE data for {symbol}")
                     return df
                 else:
                     logger.warning(f"No live data for {symbol}, falling back to CSV")
@@ -190,7 +202,8 @@ class PaperTrader:
             # Take last N days
             df = df.tail(lookback_days).copy()
 
-            logger.info(f"✅ Fetched {len(df)} days of CSV data for {symbol}")
+            unit = "bars" if self.timeframe != "1d" else "days"
+            logger.info(f"✅ Fetched {len(df)} {unit} of CSV data for {symbol}")
             return df
 
         except Exception as e:
@@ -214,27 +227,35 @@ class PaperTrader:
                 logger.warning(f"No features computed for {symbol}")
                 return 0, 0.0, None
 
-            # Get latest features
-            latest_features = features.iloc[-1:].copy()
-
-            # Predict
-            predictions = self.model.predict(latest_features)
+            # Model needs enough data for sequences (typically 20+ rows)
+            # Pass ALL features to the model, it will return prediction for the latest point
+            predictions = self.model.predict(features)
 
             if len(predictions) == 0:
                 logger.warning(f"No prediction for {symbol}")
-                return 0, 0.0, latest_features
+                return 0, 0.0, features
 
-            # Convert to signal
-            signal = predictions.iloc[-1]  # -1, 0, or 1
+            # Get latest prediction (models return predictions for all valid sequences)
+            signal = predictions[-1]  # -1, 0, or 1
+            
+            # Handle NaN predictions (mismatched model/data)
+            if np.isnan(signal) or not np.isfinite(signal):
+                logger.warning(f"Model produced NaN/inf for {symbol} - model may be mismatched with data")
+                return 0, 0.0, features.iloc[-1:].copy()
+            
             confidence = abs(signal)  # Simple confidence
 
             logger.info(
                 f"✅ Signal for {symbol}: {signal} (confidence={confidence:.2f})"
             )
+            
+            # Return latest features for debugging/logging
+            latest_features = features.iloc[-1:].copy()
             return int(signal), float(confidence), latest_features
 
         except Exception as e:
             logger.error(f"Failed to generate signal for {symbol}: {e}")
+            return 0, 0.0, None
             return 0, 0.0, None
 
     def execute_signal(self, symbol: str, signal: int, data: pd.DataFrame) -> None:
@@ -344,6 +365,34 @@ class PaperTrader:
 
 def main():
     """Main entry point."""
+    # Load config for defaults
+    from config import load_config
+    try:
+        cfg = load_config()
+        default_symbols = cfg.get_symbols_normalized()
+        default_timeframe = cfg.data.timeframe
+        default_model = cfg.model.model_type
+        
+        # Auto-calculate interval based on timeframe
+        timeframe_to_seconds = {
+            "1m": 60,
+            "5m": 300,
+            "15m": 900,
+            "30m": 1800,
+            "1h": 3600,
+            "4h": 14400,
+            "1d": 3600,  # Check daily markets every hour
+            "1w": 3600,  # Check weekly markets every hour
+            "1mo": 3600, # Check monthly markets every hour
+        }
+        default_interval = timeframe_to_seconds.get(default_timeframe, 3600)
+    except Exception:
+        # Fallback if config fails
+        default_symbols = ["eurusd"]
+        default_timeframe = "1d"
+        default_model = "lstm_transformer"
+        default_interval = 3600
+    
     parser = argparse.ArgumentParser(description="Run paper trading")
     parser.add_argument(
         "--capital", type=float, default=100000, help="Initial capital (default: $100k)"
@@ -351,15 +400,15 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="lstm_transformer",
-        help="Model to use (default: lstm_transformer)",
+        default=default_model,
+        help=f"Model to use (default: from config or {default_model})",
     )
     parser.add_argument(
         "--symbols",
         type=str,
         nargs="+",
-        default=["eurusd"],
-        help="Symbols to trade (default: eurusd)",
+        default=default_symbols,
+        help=f"Symbols to trade (default: from config or {default_symbols[0]})",
     )
     parser.add_argument(
         "--iterations",
@@ -370,15 +419,15 @@ def main():
     parser.add_argument(
         "--interval",
         type=int,
-        default=3600,
-        help="Seconds between iterations (default: 3600 = 1 hour)",
+        default=default_interval,
+        help=f"Seconds between iterations (default: {default_interval}s based on {default_timeframe} timeframe)",
     )
     parser.add_argument(
         "--timeframe",
         type=str,
-        default="1d",
+        default=default_timeframe,
         choices=["1m", "2m", "5m", "15m", "30m", "1h", "90m", "4h", "1d", "1w", "1mo"],
-        help="Data timeframe for analysis (default: 1d = daily)",
+        help=f"Data timeframe for analysis (default: from config or {default_timeframe})",
     )
     parser.add_argument(
         "--live",

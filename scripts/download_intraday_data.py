@@ -7,14 +7,22 @@ Note: Yahoo Finance limits intraday data to the last 60 days.
 
 Saves to data/raw/ as CSV.
 
-Examples:
-    # Download 1-minute BTC data
-    python scripts/download_intraday_data.py --timeframe 1m --symbols btcusd
+Defaults from config/dev.yaml:
+    - Symbols: data.symbols
+    - Timeframe: data.timeframe
+    - Days: auto-calculated from timeframe (1m=7, 5m+=59, 1d+=365)
 
-    # Download 5-minute data for multiple pairs
+Examples:
+    # Download using config defaults (btcusd, 1m, 7 days)
+    python scripts/download_intraday_data.py
+
+    # Override symbol
+    python scripts/download_intraday_data.py --symbols eurusd
+
+    # Override timeframe and symbol
     python scripts/download_intraday_data.py --timeframe 5m --symbols eurusd gbpusd btcusd
 
-    # Download 15-minute with custom lookback
+    # Custom lookback period
     python scripts/download_intraday_data.py --timeframe 15m --days 30 --symbols btcusd
 """
 
@@ -106,29 +114,48 @@ def download(
 
 
 def main() -> int:
+    # Load config for defaults
+    from src.config import load_config
+    try:
+        cfg = load_config()
+        default_symbols = cfg.get_symbols_normalized()
+        default_timeframe = cfg.data.timeframe
+    except Exception:
+        # Fallback if config fails
+        default_symbols = ["btcusd"]
+        default_timeframe = "1m"
+    
+    # Auto-calculate default days based on timeframe
+    if default_timeframe == "1m":
+        default_days = 7
+    elif default_timeframe in ["2m", "5m", "15m", "30m", "1h"]:
+        default_days = 59
+    else:
+        default_days = 365
+    
     parser = argparse.ArgumentParser(
         description="Download intraday market data from Yahoo Finance"
     )
     parser.add_argument(
         "--timeframe",
         "-t",
-        default="1m",
+        default=default_timeframe,
         choices=["1m", "2m", "5m", "15m", "30m", "1h", "1d"],
-        help="Timeframe for data (default: 1m)"
+        help=f"Timeframe for data (default: {default_timeframe} from config)"
     )
     parser.add_argument(
         "--days",
         "-d",
         type=int,
-        default=7,
-        help="Number of days to download (1m: max 7, others: max 59, default: 7)"
+        default=default_days,
+        help=f"Number of days to download (1m: max 7, others: max 59, default: {default_days})"
     )
     parser.add_argument(
         "--symbols",
         "-s",
         nargs="+",
-        default=["btcusd"],
-        help="Symbols to download (default: btcusd)"
+        default=default_symbols,
+        help=f"Symbols to download (default: {default_symbols} from config)"
     )
     
     args = parser.parse_args()

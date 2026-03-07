@@ -43,8 +43,13 @@ def load_audit_events(limit=1000):
         return [], {}
 
 
-def parse_pnl_from_events(events):
-    """Extract PnL timeline from audit events."""
+def parse_pnl_from_events(events, symbol_filter=None):
+    """Extract PnL timeline from audit events.
+    
+    Args:
+        events: List of audit events
+        symbol_filter: Optional symbol to filter by (e.g., 'btcusd'). If None, show all.
+    """
     pnl_data = []
     cumulative_pnl = 0.0
 
@@ -54,19 +59,39 @@ def parse_pnl_from_events(events):
         
         if event_type == "position_close":
             metadata = event.get("metadata", {})
+            symbol = metadata.get("symbol", "").lower()
             pnl = metadata.get("pnl", 0)
+            
+            # Apply symbol filter
+            if symbol_filter and symbol_filter.lower() != "all":
+                if symbol != symbol_filter.lower():
+                    continue
+            
             cumulative_pnl += pnl
 
             pnl_data.append(
                 {
                     "timestamp": event.get("timestamp", ""),
-                    "symbol": metadata.get("symbol", ""),
+                    "symbol": symbol,
                     "pnl": pnl,
                     "cumulative_pnl": cumulative_pnl,
                 }
             )
 
     return pd.DataFrame(pnl_data)
+
+
+def get_symbols_from_events(events):
+    """Extract unique symbols from events."""
+    symbols = set()
+    for event in events:
+        event_type = event.get("event_type", "")
+        if event_type in ["position_open", "position_close", "signal_generated"]:
+            metadata = event.get("metadata", {})
+            symbol = metadata.get("symbol", "")
+            if symbol:
+                symbols.add(symbol.upper())
+    return sorted(list(symbols))
 
 
 def plot_equity_curve(pnl_df, initial_capital=100000):
@@ -167,17 +192,38 @@ def show_metrics(pnl_df, initial_capital=100000):
     col4.metric("Return", f"{total_return:+.2f}%")
 
 
-def show_recent_events(events, limit=10):
-    """Show recent events table."""
+def show_recent_events(events, limit=10, symbol_filter=None):
+    """Show recent events table.
+    
+    Args:
+        events: List of audit events
+        limit: Max number of events to show
+        symbol_filter: Optional symbol to filter by
+    """
     st.subheader("📋 Recent Events")
 
     if not events:
         st.info("No events yet")
         return
 
+    # Filter events by symbol if specified
+    filtered_events = []
+    for event in events:
+        # If filtering by symbol, only include symbol-related events
+        if symbol_filter and symbol_filter != "All":
+            metadata = event.get("metadata", {})
+            event_symbol = metadata.get("symbol", "").upper()
+            if event_symbol and event_symbol != symbol_filter:
+                continue
+        filtered_events.append(event)
+
+    if not filtered_events:
+        st.info(f"No events for {symbol_filter}")
+        return
+
     # Convert to dataframe
     event_data = []
-    for event in events[-limit:]:
+    for event in filtered_events[-limit:]:
         # Handle dict format
         timestamp = event.get("timestamp", "")
         if timestamp:
@@ -239,6 +285,25 @@ with st.sidebar:
     initial_capital = st.number_input(
         "Initial Capital ($)", value=100000, step=1000, format="%d"
     )
+    
+    # Load events first to get symbols
+    temp_events, _ = load_audit_events(limit=1000)
+    available_symbols = get_symbols_from_events(temp_events)
+    
+    # Symbol selector
+    st.subheader("📊 Symbol Filter")
+    symbol_options = ["All"] + available_symbols
+    selected_symbol = st.selectbox(
+        "Select Symbol",
+        options=symbol_options,
+        index=0,
+        help="Filter dashboard by trading pair"
+    )
+    
+    if selected_symbol != "All":
+        st.info(f"Showing data for: **{selected_symbol}**")
+
+    st.divider()
 
     auto_refresh = st.checkbox("Auto-refresh (5s)", value=True)
 
@@ -249,7 +314,7 @@ with st.sidebar:
 
     st.header("🎯 Quick Actions")
 
-    if st.button("🔄 Refresh Now", width="stretch"):
+    if st.button("🔄 Refresh Now", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -261,9 +326,10 @@ with st.sidebar:
 
 # Main content
 events, stats = load_audit_events(limit=1000)
-pnl_df = parse_pnl_from_events(events)
+pnl_df = parse_pnl_from_events(events, symbol_filter=selected_symbol)
 
-# Metrics row
+# Metrics row with symbol header
+st.markdown(f"### {'📊 All Symbols' if selected_symbol == 'All' else f'📊 {selected_symbol}'}")
 show_metrics(pnl_df, initial_capital)
 
 st.divider()
@@ -283,7 +349,7 @@ st.divider()
 col1, col2 = st.columns(2)
 
 with col1:
-    show_recent_events(events, limit=10)
+    show_recent_events(events, limit=10, symbol_filter=selected_symbol)
 
 with col2:
     show_event_stats(stats)
