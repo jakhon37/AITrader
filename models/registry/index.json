@@ -5,14 +5,24 @@
       "20260306_151425",
       "20260306_151812",
       "20260306_152211",
-      "20260307_094846"
+      "20260307_094846",
+      "20260313_090017",
+      "20260313_090605",
+      "20260313_090628",
+      "20260313_090644",
+      "20260313_090659"
     ],
     "lstm_transformer": [
       "20260306_151122",
       "20260306_151425",
       "20260306_151812",
       "20260306_152211",
-      "20260307_094846"
+      "20260307_094846",
+      "20260313_090017",
+      "20260313_090605",
+      "20260313_090628",
+      "20260313_090644",
+      "20260313_090659"
     ]
   },
   "versions": {
@@ -25,7 +35,17 @@
     "garch_gru:20260306_152211": "metadata/garch_gru_20260306_152211.json",
     "lstm_transformer:20260306_152211": "metadata/lstm_transformer_20260306_152211.json",
     "garch_gru:20260307_094846": "metadata/garch_gru_20260307_094846.json",
-    "lstm_transformer:20260307_094846": "metadata/lstm_transformer_20260307_094846.json"
+    "lstm_transformer:20260307_094846": "metadata/lstm_transformer_20260307_094846.json",
+    "garch_gru:20260313_090017": "metadata/garch_gru_20260313_090017.json",
+    "lstm_transformer:20260313_090017": "metadata/lstm_transformer_20260313_090017.json",
+    "garch_gru:20260313_090605": "metadata/garch_gru_20260313_090605.json",
+    "lstm_transformer:20260313_090605": "metadata/lstm_transformer_20260313_090605.json",
+    "garch_gru:20260313_090628": "metadata/garch_gru_20260313_090628.json",
+    "lstm_transformer:20260313_090628": "metadata/lstm_transformer_20260313_090628.json",
+    "garch_gru:20260313_090644": "metadata/garch_gru_20260313_090644.json",
+    "lstm_transformer:20260313_090644": "metadata/lstm_transformer_20260313_090644.json",
+    "garch_gru:20260313_090659": "metadata/garch_gru_20260313_090659.json",
+    "lstm_transformer:20260313_090659": "metadata/lstm_transformer_20260313_090659.json"
   },
   "tags": {
     "volatility": [
@@ -33,28 +53,48 @@
       "garch_gru:20260306_151425",
       "garch_gru:20260306_151812",
       "garch_gru:20260306_152211",
-      "garch_gru:20260307_094846"
+      "garch_gru:20260307_094846",
+      "garch_gru:20260313_090017",
+      "garch_gru:20260313_090605",
+      "garch_gru:20260313_090628",
+      "garch_gru:20260313_090644",
+      "garch_gru:20260313_090659"
     ],
     "gru": [
       "garch_gru:20260306_151122",
       "garch_gru:20260306_151425",
       "garch_gru:20260306_151812",
       "garch_gru:20260306_152211",
-      "garch_gru:20260307_094846"
+      "garch_gru:20260307_094846",
+      "garch_gru:20260313_090017",
+      "garch_gru:20260313_090605",
+      "garch_gru:20260313_090628",
+      "garch_gru:20260313_090644",
+      "garch_gru:20260313_090659"
     ],
     "attention": [
       "lstm_transformer:20260306_151122",
       "lstm_transformer:20260306_151425",
       "lstm_transformer:20260306_151812",
       "lstm_transformer:20260306_152211",
-      "lstm_transformer:20260307_094846"
+      "lstm_transformer:20260307_094846",
+      "lstm_transformer:20260313_090017",
+      "lstm_transformer:20260313_090605",
+      "lstm_transformer:20260313_090628",
+      "lstm_transformer:20260313_090644",
+      "lstm_transformer:20260313_090659"
     ],
     "transformer": [
       "lstm_transformer:20260306_151122",
       "lstm_transformer:20260306_151425",
       "lstm_transformer:20260306_151812",
       "lstm_transformer:20260306_152211",
-      "lstm_transformer:20260307_094846"
+      "lstm_transformer:20260307_094846",
+      "lstm_transformer:20260313_090017",
+      "lstm_transformer:20260313_090605",
+      "lstm_transformer:20260313_090628",
+      "lstm_transformer:20260313_090644",
+      "lstm_transformer:20260313_090659"
     ]
   }
 }

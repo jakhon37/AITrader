@@ -107,13 +107,30 @@ def run_backtest(symbol, model_type, model_version, data_dir="data/raw",
 
 
 def main():
+    # Load universal config for defaults
+    from config import load_config
+    try:
+        cfg = load_config()
+        default_symbol = cfg.get_primary_symbol()
+        default_timeframe = cfg.data.timeframe
+        default_model = cfg.model.model_type
+    except Exception:
+        # Fallback if config fails
+        default_symbol = "eurusd"
+        default_timeframe = "1d"
+        default_model = "lstm_transformer"
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbol", default="eurusd")
-    parser.add_argument("--model", default="lstm_transformer", 
-                        choices=["garch_gru", "lstm_transformer"])
-    parser.add_argument("--model-version")    parser.add_argument("--timeframe", "-t", default="1d",
+    parser.add_argument("--symbol", default=default_symbol,
+                       help=f"Symbol to backtest (default: {default_symbol} from config)")
+    parser.add_argument("--model", default=default_model, 
+                        choices=["garch_gru", "lstm_transformer"],
+                        help=f"Model type (default: {default_model} from config)")
+    parser.add_argument("--model-version")
+    parser.add_argument("--timeframe", "-t", default=default_timeframe,
                        choices=["1m", "5m", "15m", "30m", "1h", "1d"],
-                       help="Data timeframe (default: 1d)")    parser.add_argument("--all-models", action="store_true")
+                       help=f"Data timeframe (default: {default_timeframe} from config)")
+    parser.add_argument("--all-models", action="store_true")
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     parser.add_argument("--commission", type=float, default=0.001)
     parser.add_argument("--slippage", type=float, default=0.0005)

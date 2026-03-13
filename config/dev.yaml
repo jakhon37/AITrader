@@ -3,11 +3,11 @@ env: dev
 data:
   # First symbol is used as default for training scripts
   symbols:
+    - GOLD
     - BTC_USD
     - EUR_USD
     - GBP_USD
     - USD_JPY
-    - GOLD
   lookback_days: 365
   data_dir: data
   data_version: null
@@ -28,7 +28,7 @@ model:
 risk:
   max_position_pct: 0.102
   max_drawdown_pct: 0.215
-  daily_loss_limit_pct: 0.205
+  daily_loss_limit_pct: 0.20
   max_signals_per_day: 500
 
 execution:

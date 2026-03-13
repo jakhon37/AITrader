@@ -238,7 +238,7 @@ class ModelTrainer:
         )
         
         # Save models
-        trainer.save_models(garch_gru, lstm_transformer, garch_metrics, lstm_metrics, symbol=symbol)
+        self.save_models(garch_gru, lstm_transformer, garch_metrics, lstm_metrics, symbol=symbol)
         
         # Print summary
         logger.info("=" * 60)
@@ -251,17 +251,40 @@ class ModelTrainer:
 
 def main():
     """Main entry point."""
+    # Load universal config for defaults
+    from config import load_config
+    try:
+        cfg = load_config()
+        default_symbol = cfg.get_primary_symbol()
+        default_epochs = cfg.model.epochs
+        default_batch_size = cfg.model.batch_size
+    except Exception:
+        # Fallback if config fails
+        default_symbol = "eurusd"
+        default_epochs = 50
+        default_batch_size = 256
+    
     parser = argparse.ArgumentParser(description="Train all models")
-    parser.add_argument('--symbol', type=str, default='eurusd', help='Symbol to train on')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
+    parser.add_argument(
+        '--symbol',
+        type=str,
+        default=default_symbol,
+        help=f'Symbol to train on (default: {default_symbol} from config)'
+    )
+    parser.add_argument(
+        '--epochs',
+        type=int,
+        default=default_epochs,
+        help=f'Number of epochs (default: {default_epochs} from config)'
+    )
     parser.add_argument(
         '--batch-size',
         '-b',
         type=int,
-        default=256,
-        help='Batch size - larger is faster on GPU (default: 256, try 512-1024)'
+        default=default_batch_size,
+        help=f'Batch size (default: {default_batch_size} from config, GPU-optimized: 256-1024)'
     )
-    parser.add_argument('--config', type=str, default='config/features.yaml', help='Feature config')
+    parser.add_argument('--config', type=str, default='config/features.yaml', help='Feature config file')
     parser.add_argument('--data-dir', type=str, default='data/raw', help='Data directory')
     parser.add_argument('--registry', type=str, default='models/registry', help='Model registry')
     

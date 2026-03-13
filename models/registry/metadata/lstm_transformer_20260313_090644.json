@@ -1,0 +1,17 @@
+{
+  "model_name": "lstm_transformer",
+  "version": "20260313_090644",
+  "registered_at": "2026-03-13T09:06:44.402132",
+  "model_path": "models/lstm_transformer/20260313_090644.pt",
+  "original_path": "models/temp/lstm_transformer_gold_1d_20260313_090644.pt",
+  "tags": [
+    "attention",
+    "transformer"
+  ],
+  "status": "dev",
+  "metrics": {
+    "directional_accuracy": 0.6182795698924731,
+    "final_train_loss": 0.00011103954602731392
+  },
+  "trained_at": "20260313_090644"
+}
