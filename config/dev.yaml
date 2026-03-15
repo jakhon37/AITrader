@@ -18,12 +18,36 @@ model:
   checkpoint_dir: checkpoints
   ensemble_weights: {}
   confidence_threshold: 0.055
-  # Available models: lstm_transformer, garch_gru
+  
+  # Available models: lightgbm, xgboost, enhanced_transformer, lstm_transformer, garch_gru
+  # Recommended: lightgbm (fastest, accurate), xgboost (robust), enhanced_transformer (best accuracy)
   model_type: "lstm_transformer"
-  # Optimized for GPU (RTX 4080: use 256-512)
-  batch_size: 256
-  # Default training epochs
-  epochs: 50
+  
+  # Common parameters
+  epochs: 50              # Training epochs (neural nets only)
+  batch_size: 256         # Batch size (neural nets only, GPU-optimized for RTX 4080)
+  
+  # Neural Network Parameters (lstm_transformer, garch_gru)
+  hidden_size: 128        # Hidden dimension for LSTM/GRU
+  num_layers: 2           # Number of LSTM/GRU layers
+  dropout: 0.2            # Dropout rate for regularization
+  learning_rate: 0.001    # Learning rate for optimizer
+  seq_length: 20          # Sequence length (timesteps to look back)
+  
+  # Enhanced Transformer Parameters (enhanced_transformer)
+  d_model: 256            # Model dimension (larger = more capacity)
+  nhead: 8                # Number of attention heads (must divide d_model)
+  num_transformer_layers: 4  # Number of transformer encoder layers
+  dim_feedforward: 1024   # Feedforward network dimension
+  
+  # Tree-based Model Parameters (lightgbm, xgboost)
+  n_estimators: 500       # Number of boosting rounds/trees
+  max_depth: 7            # Maximum tree depth
+  tree_learning_rate: 0.01  # Learning rate for boosting (lower = slower but more robust)
+  subsample: 0.8          # Row sampling ratio per iteration
+  colsample_bytree: 0.8   # Column sampling ratio per tree
+  reg_alpha: 0.1          # L1 regularization term
+  reg_lambda: 0.1         # L2 regularization term
 
 risk:
   max_position_pct: 0.102

@@ -28,9 +28,34 @@ class ModelConfig(BaseModel):
     checkpoint_dir: str = Field(default="checkpoints")
     ensemble_weights: dict[str, float] = Field(default_factory=dict)
     confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.55)
-    model_type: str = Field(default="lstm_transformer", description="Model to use: lstm_transformer, garch_gru")
-    batch_size: int = Field(default=256, ge=8, le=4096, description="Training batch size")
-    epochs: int = Field(default=50, ge=1, le=1000, description="Training epochs")
+    model_type: str = Field(
+        default="lstm_transformer", 
+        description="Model to use: lightgbm, xgboost, enhanced_transformer, lstm_transformer, garch_gru"
+    )
+    batch_size: int = Field(default=256, ge=8, le=4096, description="Training batch size (neural nets)")
+    epochs: int = Field(default=50, ge=1, le=1000, description="Training epochs (neural nets)")
+    
+    # Neural network specific (LSTM-Transformer, GARCH-GRU)
+    hidden_size: int = Field(default=128, ge=32, le=512, description="Hidden size for LSTM/GRU models")
+    num_layers: int = Field(default=2, ge=1, le=5, description="Number of layers")
+    dropout: float = Field(default=0.2, ge=0.0, le=0.5, description="Dropout rate")
+    learning_rate: float = Field(default=0.001, ge=0.00001, le=0.1, description="Learning rate for neural nets")
+    seq_length: int = Field(default=20, ge=5, le=200, description="Sequence length for sequential models")
+    
+    # Enhanced Transformer specific
+    d_model: int = Field(default=256, ge=64, le=1024, description="Model dimension for enhanced transformer")
+    nhead: int = Field(default=8, ge=2, le=16, description="Number of attention heads")
+    num_transformer_layers: int = Field(default=4, ge=1, le=8, description="Number of transformer layers")
+    dim_feedforward: int = Field(default=1024, ge=256, le=4096, description="Feedforward dimension")
+    
+    # Tree-based models (LightGBM, XGBoost)
+    n_estimators: int = Field(default=500, ge=50, le=5000, description="Number of trees/boosting rounds")
+    max_depth: int = Field(default=7, ge=3, le=15, description="Maximum tree depth")
+    tree_learning_rate: float = Field(default=0.01, ge=0.001, le=0.5, description="Learning rate for tree models")
+    subsample: float = Field(default=0.8, ge=0.5, le=1.0, description="Subsample ratio")
+    colsample_bytree: float = Field(default=0.8, ge=0.5, le=1.0, description="Column sampling ratio")
+    reg_alpha: float = Field(default=0.1, ge=0.0, le=10.0, description="L1 regularization")
+    reg_lambda: float = Field(default=0.1, ge=0.0, le=10.0, description="L2 regularization")
 
 
 class RiskConfig(BaseModel):

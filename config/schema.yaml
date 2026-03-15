@@ -17,6 +17,29 @@ model:
   checkpoint_dir: checkpoints
   ensemble_weights: {}
   confidence_threshold: 0.55
+  # Model types: lightgbm, xgboost, enhanced_transformer, lstm_transformer, garch_gru
+  model_type: lstm_transformer
+  # Neural net params
+  epochs: 50
+  batch_size: 256
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  seq_length: 20
+  # Enhanced transformer params
+  d_model: 256
+  nhead: 8
+  num_transformer_layers: 4
+  dim_feedforward: 1024
+  # Tree-based params
+  n_estimators: 500
+  max_depth: 7
+  tree_learning_rate: 0.01
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
 
 risk:
   max_position_pct: 0.02

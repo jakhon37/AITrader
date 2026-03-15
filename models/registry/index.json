@@ -10,7 +10,8 @@
       "20260313_090605",
       "20260313_090628",
       "20260313_090644",
-      "20260313_090659"
+      "20260313_090659",
+      "20260314_160158"
     ],
     "lstm_transformer": [
       "20260306_151122",
@@ -22,7 +23,8 @@
       "20260313_090605",
       "20260313_090628",
       "20260313_090644",
-      "20260313_090659"
+      "20260313_090659",
+      "20260314_160158"
     ]
   },
   "versions": {
@@ -45,7 +47,9 @@
     "garch_gru:20260313_090644": "metadata/garch_gru_20260313_090644.json",
     "lstm_transformer:20260313_090644": "metadata/lstm_transformer_20260313_090644.json",
     "garch_gru:20260313_090659": "metadata/garch_gru_20260313_090659.json",
-    "lstm_transformer:20260313_090659": "metadata/lstm_transformer_20260313_090659.json"
+    "lstm_transformer:20260313_090659": "metadata/lstm_transformer_20260313_090659.json",
+    "garch_gru:20260314_160158": "metadata/garch_gru_20260314_160158.json",
+    "lstm_transformer:20260314_160158": "metadata/lstm_transformer_20260314_160158.json"
   },
   "tags": {
     "volatility": [
@@ -58,7 +62,8 @@
       "garch_gru:20260313_090605",
       "garch_gru:20260313_090628",
       "garch_gru:20260313_090644",
-      "garch_gru:20260313_090659"
+      "garch_gru:20260313_090659",
+      "garch_gru:20260314_160158"
     ],
     "gru": [
       "garch_gru:20260306_151122",
@@ -70,7 +75,8 @@
       "garch_gru:20260313_090605",
       "garch_gru:20260313_090628",
       "garch_gru:20260313_090644",
-      "garch_gru:20260313_090659"
+      "garch_gru:20260313_090659",
+      "garch_gru:20260314_160158"
     ],
     "attention": [
       "lstm_transformer:20260306_151122",
@@ -82,7 +88,8 @@
       "lstm_transformer:20260313_090605",
       "lstm_transformer:20260313_090628",
       "lstm_transformer:20260313_090644",
-      "lstm_transformer:20260313_090659"
+      "lstm_transformer:20260313_090659",
+      "lstm_transformer:20260314_160158"
     ],
     "transformer": [
       "lstm_transformer:20260306_151122",
@@ -94,7 +101,8 @@
       "lstm_transformer:20260313_090605",
       "lstm_transformer:20260313_090628",
       "lstm_transformer:20260313_090644",
-      "lstm_transformer:20260313_090659"
+      "lstm_transformer:20260313_090659",
+      "lstm_transformer:20260314_160158"
     ]
   }
 }
