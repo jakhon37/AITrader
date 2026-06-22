@@ -2,14 +2,44 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from src.execution.position_manager import PositionManager
 from execution.engine import ExecutionEngine, ExecutionConfig
 from execution.risk_manager import RiskViolation
 from execution.circuit_breaker import HaltReason
+
+
+@pytest.fixture(autouse=True)
+def mock_pm_state_file(tmp_path):
+    """Force PositionManager to use a temporary file for saving/loading positions,
+    and disable random order rejections in the simulated broker for deterministic tests.
+    """
+    from src.execution.brokers.sim import SimBrokerConfig
+    original_init = PositionManager.__init__
+    original_broker_config_init = SimBrokerConfig.__init__
+
+    def mocked_init(self, *args, **kwargs):
+        temp_file_path = str(tmp_path / "positions.json")
+        if len(args) >= 4:
+            args = list(args)
+            args[3] = temp_file_path
+            args = tuple(args)
+        else:
+            kwargs["state_file"] = temp_file_path
+        original_init(self, *args, **kwargs)
+
+    def mocked_broker_config_init(self, *args, **kwargs):
+        kwargs["fill_rate"] = 1.0
+        original_broker_config_init(self, *args, **kwargs)
+
+    with patch.object(PositionManager, "__init__", mocked_init), \
+         patch.object(SimBrokerConfig, "__init__", mocked_broker_config_init):
+        yield
 
 
 def test_execution_engine_initialization():

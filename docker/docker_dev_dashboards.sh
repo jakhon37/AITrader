@@ -17,11 +17,17 @@ docker stop aitrader-monitor aitrader-explorer 2>/dev/null || true
 sleep 2
 echo ""
 
+ENV_FILE_ARG=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    ENV_FILE_ARG="--env-file $PROJECT_DIR/.env"
+fi
+
 # Start paper monitor dashboard
 echo "🚀 Starting Paper Monitor on port 8501..."
 docker run -d --rm \
     --name aitrader-monitor \
     -p 8501:8501 \
+    $ENV_FILE_ARG \
     -v "$PROJECT_DIR/dashboards:/app/dashboards:ro" \
     -v "$PROJECT_DIR/logs:/app/logs:ro" \
     -v "$PROJECT_DIR/data:/app/data:ro" \
@@ -36,6 +42,7 @@ echo "🚀 Starting Feature Explorer on port 8502..."
 docker run -d --rm \
     --name aitrader-explorer \
     -p 8502:8502 \
+    $ENV_FILE_ARG \
     -v "$PROJECT_DIR/dashboards:/app/dashboards:ro" \
     -v "$PROJECT_DIR/data:/app/data:ro" \
     -e PYTHONUNBUFFERED=1 \

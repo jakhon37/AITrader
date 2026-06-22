@@ -63,8 +63,14 @@ echo "$GPU_STATUS"
 echo ""
 
 # Run training with local code mounted
+ENV_FILE_ARG=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    ENV_FILE_ARG="--env-file $PROJECT_DIR/.env"
+fi
+
 docker run -it --rm $GPU_FLAGS \
     --name aitrader-dev-train \
+    $ENV_FILE_ARG \
     -v "$PROJECT_DIR/src:/app/src:ro" \
     -v "$PROJECT_DIR/scripts:/app/scripts:ro" \
     -v "$PROJECT_DIR/config:/app/config:ro" \

@@ -1,38 +1,17 @@
-"""Risk management system."""
+"""Risk management system implementing pre-trade validations."""
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Set
+
+from src.core.clock import now
+from src.core.config import InstrumentConfig, RiskConfig
+from src.core.contracts import Instrument, PortfolioState, TradeSignal
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RiskLimits:
-    """Risk limit configuration."""
-
-    max_position_size: float = 100000.0  # Max value per position
-    max_positions: int = 5  # Max concurrent positions
-    max_portfolio_exposure: float = 0.8  # Max 80% of capital
-    max_daily_loss: float = 0.02  # Max 2% daily loss
-    max_weekly_loss: float = 0.05  # Max 5% weekly loss
-    max_drawdown: float = 0.15  # Max 15% drawdown
-    max_leverage: float = 1.0  # No leverage
-
-
-@dataclass
-class RiskMetrics:
-    """Current risk metrics."""
-
-    portfolio_value: float
-    total_exposure: float
-    num_positions: int
-    daily_pnl: float
-    weekly_pnl: float
-    drawdown_from_peak: float
-    peak_portfolio_value: float
-    leverage: float
 
 
 class RiskViolation(Exception):
@@ -41,96 +20,160 @@ class RiskViolation(Exception):
     pass
 
 
+@dataclass
+class RiskDecision:
+    """Decision made by the risk manager."""
+
+    approved: bool
+    reason: Optional[str]
+    adjusted_size: float
+
+
 class RiskManager:
-    """Risk management system."""
+    """Risk management system enforcing pre-trade checks."""
 
-    def __init__(self, limits: Optional[RiskLimits] = None, initial_capital: float = 100000.0):
-        """Initialize risk manager."""
-        self.limits = limits or RiskLimits()
-        self.initial_capital = initial_capital
-        self.peak_value = initial_capital
-        self.daily_reset_time = datetime.now()
-        self.weekly_reset_time = datetime.now()
-        self.daily_start_value = initial_capital
-        self.weekly_start_value = initial_capital
-        logger.info(f"Risk manager initialized: ${initial_capital:,.0f}")
+    def __init__(
+        self,
+        config: Optional[RiskConfig] = None,
+        min_confidence: float = 0.4,
+        max_positions: int = 3,
+        correlation_reduction_factor: float = 0.5,
+        env: str = "dev",
+    ):
+        """Initialize risk manager.
 
-    def check_position_size(self, position_value: float) -> None:
-        """Check if position size is within limits."""
-        if abs(position_value) > self.limits.max_position_size:
-            raise RiskViolation(
-                f"Position ${abs(position_value):,.0f} exceeds "
-                f"${self.limits.max_position_size:,.0f}"
+        Args:
+            config: Risk configuration
+            min_confidence: Minimum required confidence threshold (default 0.4)
+            max_positions: Maximum concurrent open positions (default 3)
+            correlation_reduction_factor: Fraction to reduce size by if correlated pair is open (default 0.5)
+            env: Running environment name (e.g. 'dev', 'staging', 'prod')
+        """
+        self.config = config or RiskConfig()
+        self.min_confidence = min_confidence
+        self.max_positions = max_positions
+        self.correlation_reduction_factor = correlation_reduction_factor
+        self.env = env
+
+        # Standard static correlation groups (e.g. EURUSD and GBPUSD tend to be highly correlated)
+        self.correlated_groups: list[Set[Instrument]] = [
+            {Instrument.EURUSD, Instrument.GBPUSD}
+        ]
+
+        logger.info(
+            f"RiskManager initialized (min_confidence={self.min_confidence}, "
+            f"max_positions={self.max_positions}, env={self.env})"
+        )
+
+    def is_market_open(self, dt: datetime) -> bool:
+        """Check if Forex/Gold markets are open.
+
+        Forex/Gold is generally closed from Friday 22:00 UTC to Sunday 22:00 UTC.
+        """
+        if self.env != "prod":
+            return True
+
+        weekday = dt.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+        hour = dt.hour
+
+        if weekday == 4 and hour >= 22:  # Friday post-22:00 UTC
+            return False
+        if weekday == 5:  # Saturday
+            return False
+        if weekday == 6 and hour < 22:  # Sunday pre-22:00 UTC
+            return False
+
+        return True
+
+    def validate(
+        self,
+        signal: TradeSignal,
+        portfolio: PortfolioState,
+        inst_config: InstrumentConfig,
+    ) -> RiskDecision:
+        """Validate pre-trade risk constraints.
+
+        Args:
+            signal: TradeSignal to validate.
+            portfolio: Current PortfolioState.
+            inst_config: The configuration block for this instrument.
+
+        Returns:
+            RiskDecision containing approval status and adjusted size.
+        """
+        current_time = now()
+        instrument = signal.instrument
+        suggested_size = signal.suggested_size or 0.01
+
+        # 1. Signal Age: TradeSignal.valid_until > clock.now()
+        if signal.valid_until <= current_time:
+            return RiskDecision(
+                approved=False,
+                reason=f"Signal expired at {signal.valid_until.isoformat()}",
+                adjusted_size=0.0,
             )
 
-    def check_max_positions(self, num_positions: int) -> None:
-        """Check if number of positions is within limits."""
-        if num_positions >= self.limits.max_positions:
-            raise RiskViolation(f"Max positions {self.limits.max_positions} reached")
+        # 2. Min confidence: signal.confidence >= risk.min_confidence (default 0.4)
+        if signal.confidence < self.min_confidence:
+            return RiskDecision(
+                approved=False,
+                reason=f"Signal confidence {signal.confidence:.2f} below minimum {self.min_confidence}",
+                adjusted_size=0.0,
+            )
 
-    def check_daily_loss(self, current_value: float) -> None:
-        """Check if daily loss exceeds limit."""
-        now = datetime.now()
-        if now.date() > self.daily_reset_time.date():
-            self.daily_reset_time = now
-            self.daily_start_value = current_value
+        # 3. Session hours: instrument active market hours only
+        if not self.is_market_open(current_time):
+            return RiskDecision(
+                approved=False,
+                reason="Market is closed (weekend halt)",
+                adjusted_size=0.0,
+            )
 
-        daily_return = (current_value - self.daily_start_value) / self.daily_start_value
-        if daily_return < -self.limits.max_daily_loss:
-            raise RiskViolation(f"Daily loss {abs(daily_return):.2%} exceeds limit")
+        # 4. Max concurrent open positions (default 3 globally)
+        open_positions = portfolio.open_positions
+        # Check if we already have a position in this instrument
+        already_open = any(pos.instrument == instrument for pos in open_positions)
+        if not already_open and len(open_positions) >= self.max_positions:
+            return RiskDecision(
+                approved=False,
+                reason=f"Maximum concurrent open positions ({self.max_positions}) reached",
+                adjusted_size=0.0,
+            )
 
-    def check_weekly_loss(self, current_value: float) -> None:
-        """Check if weekly loss exceeds limit."""
-        now = datetime.now()
-        if (now - self.weekly_reset_time).days >= 7:
-            self.weekly_reset_time = now
-            self.weekly_start_value = current_value
+        # 5. Max position size vs instrument_config.max_position_lots
+        adjusted_size = min(suggested_size, inst_config.max_position_lots)
 
-        weekly_return = (current_value - self.weekly_start_value) / self.weekly_start_value
-        if weekly_return < -self.limits.max_weekly_loss:
-            raise RiskViolation(f"Weekly loss {abs(weekly_return):.2%} exceeds limit")
+        # 6. Correlation check: reduce size if correlated instrument already open
+        # Find if any other open position is correlated with this signal's instrument
+        for group in self.correlated_groups:
+            if instrument in group:
+                for pos in open_positions:
+                    if pos.instrument != instrument and pos.instrument in group:
+                        # Reduce size due to correlation
+                        old_size = adjusted_size
+                        adjusted_size *= self.correlation_reduction_factor
+                        adjusted_size = round(max(0.01, adjusted_size), 2)
+                        logger.info(
+                            f"Risk correlation sizing adjustment for {instrument.value}: "
+                            f"reduced {old_size} -> {adjusted_size} lots due to open {pos.instrument.value} position"
+                        )
+                        break
 
-    def check_drawdown(self, current_value: float) -> None:
-        """Check if drawdown exceeds limit."""
-        if current_value > self.peak_value:
-            self.peak_value = current_value
+        # 7. Free margin > order_margin * 1.5 (safety factor)
+        # Assuming 1:1 leverage default for margin (or full position value)
+        entry_price = signal.suggested_entry or 1.0
+        order_margin = adjusted_size * inst_config.lot_size * entry_price
+        required_margin = order_margin * 1.5
 
-        drawdown = (current_value - self.peak_value) / self.peak_value
-        if drawdown < -self.limits.max_drawdown:
-            raise RiskViolation(f"Drawdown {abs(drawdown):.2%} exceeds limit")
+        if portfolio.free_margin < required_margin:
+            return RiskDecision(
+                approved=False,
+                reason=f"Insufficient free margin: need ${required_margin:,.2f}, have ${portfolio.free_margin:,.2f}",
+                adjusted_size=0.0,
+            )
 
-    def check_all_limits(
-        self,
-        portfolio_value: float,
-        total_exposure: float,
-        num_positions: int,
-        new_position_value: Optional[float] = None,
-    ) -> None:
-        """Check all risk limits."""
-        self.check_daily_loss(portfolio_value)
-        self.check_weekly_loss(portfolio_value)
-        self.check_drawdown(portfolio_value)
-
-        if new_position_value is not None:
-            self.check_position_size(new_position_value)
-            self.check_max_positions(num_positions + 1)
-
-    def get_metrics(
-        self, portfolio_value: float, total_exposure: float, num_positions: int
-    ) -> RiskMetrics:
-        """Get current risk metrics."""
-        daily_pnl = portfolio_value - self.daily_start_value
-        weekly_pnl = portfolio_value - self.weekly_start_value
-        drawdown = (portfolio_value - self.peak_value) / self.peak_value
-        leverage = total_exposure / portfolio_value if portfolio_value > 0 else 0
-
-        return RiskMetrics(
-            portfolio_value=portfolio_value,
-            total_exposure=total_exposure,
-            num_positions=num_positions,
-            daily_pnl=daily_pnl,
-            weekly_pnl=weekly_pnl,
-            drawdown_from_peak=drawdown,
-            peak_portfolio_value=self.peak_value,
-            leverage=leverage,
+        return RiskDecision(
+            approved=True,
+            reason=None,
+            adjusted_size=adjusted_size,
         )

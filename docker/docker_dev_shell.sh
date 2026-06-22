@@ -1,60 +1,68 @@
 #!/bin/bash
-# Start an interactive shell in Docker with local code mounted
-# This allows you to develop and test using the Docker environment
+# Start an interactive shell in Docker with the entire project mounted
 
 set -e
 
-# Get the absolute path to the project directory (parent of docker/)
+# Get project root (parent of docker/)
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 
 CONTAINER_NAME="aitrader-dev-shell"
+IMAGE_NAME="aitrader-dev:latest"
 
-# Detect GPU availability
+# Detect NVIDIA GPU
 GPU_FLAGS=""
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
     GPU_FLAGS="--runtime=nvidia --gpus all"
     GPU_STATUS="🎮 GPU enabled"
 else
     GPU_STATUS="💻 CPU only"
 fi
 
-echo "🐳 Docker Interactive Shell"
+# Optional .env support
+ENV_FILE_ARG=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    ENV_FILE_ARG="--env-file $PROJECT_DIR/.env"
+fi
+
+echo "======================================"
+echo "🐳 Docker Interactive Development Shell"
+echo "======================================"
 echo "📁 Project directory: $PROJECT_DIR"
+echo "📦 Docker image: $IMAGE_NAME"
 echo "$GPU_STATUS"
 echo ""
 
-# Check if container exists
+# Remove exited container if it somehow exists
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    # Container exists, check if it's running
+
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "✅ Container is already running. Attaching new shell session..."
-        docker exec -it $CONTAINER_NAME /bin/bash
+        echo "✅ Container already running"
+        echo "🔗 Attaching shell..."
+        exec docker exec -it "$CONTAINER_NAME" /bin/bash
     else
-        echo "⚡ Container exists but stopped. Starting it..."
-        docker start $CONTAINER_NAME
-        echo "✅ Attaching to container..."
-        docker exec -it $CONTAINER_NAME /bin/bash
+        echo "⚡ Starting existing container..."
+        docker start "$CONTAINER_NAME" >/dev/null
+        echo "🔗 Attaching shell..."
+        exec docker exec -it "$CONTAINER_NAME" /bin/bash
     fi
+
 else
-    echo "🆕 Creating new container..."
-    # Run interactive shell with local code mounted
-    docker run -it --rm $GPU_FLAGS \
-        --name $CONTAINER_NAME \
-        -v "$PROJECT_DIR/src:/app/src:rw" \
-        -v "$PROJECT_DIR/tests:/app/tests:rw" \
-        -v "$PROJECT_DIR/scripts:/app/scripts:rw" \
-        -v "$PROJECT_DIR/dashboards:/app/dashboards:rw" \
-        -v "$PROJECT_DIR/config:/app/config:ro" \
-        -v "$PROJECT_DIR/data:/app/data:rw" \
-        -v "$PROJECT_DIR/models:/app/models:rw" \
-        -v "$PROJECT_DIR/logs:/app/logs:rw" \
-        -v "$PROJECT_DIR/reports:/app/reports:rw" \
-        -e PYTHONPATH=/app/src \
+
+    echo "🚀 Creating new development container..."
+    echo ""
+
+    exec docker run -it \
+        --name "$CONTAINER_NAME" \
+        $GPU_FLAGS \
+        $ENV_FILE_ARG \
+        -v "$PROJECT_DIR:/app:rw" \
+        -w /app \
+        -e PYTHONPATH=/app/src:/app \
         -e CONFIG_DIR=/app/config \
         -e PYTHONUNBUFFERED=1 \
-        -w /app \
-        aitrader-dev:latest \
+        "$IMAGE_NAME" \
         /bin/bash
 fi
 
-echo "👋 Exited Docker shell"
+# python scripts/backfill_historical.py --instruments EURUSD --timeframes 1m --start 2016-01-01 --end 2026-01-01
+# python scripts/backfill_historical.py --instruments XAUUSD --timeframes 1m --start 2016-01-01 --end 2026-01-01

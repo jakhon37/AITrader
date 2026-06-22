@@ -1,0 +1,83 @@
+# AITrader — Per-instrument trading configuration
+# All divisions load this via src.core.config.load_instruments()
+# See CONTRACTS.md for the full field reference.
+#
+# session_hours: UTC Sun open / Fri close (22:00 → 22:00 covers entire FX week)
+# news_halt_minutes: minutes before AND after a high-impact event where no new orders are placed
+# signal_decay: hours until a FundamentalSignal from each event type expires (D05 discards after)
+
+EURUSD:
+  pip_size: 0.0001
+  lot_size: 100000
+  session_hours:
+    open: "22:00"
+    close: "22:00"
+  active_timeframes: ["15m", "1h", "4h", "1d"]
+  primary_timeframe: "1h"
+  fundamental_weight: 0.3
+  technical_weight: 0.7
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  signal_decay:
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+
+GBPUSD:
+  pip_size: 0.0001
+  lot_size: 100000
+  session_hours:
+    open: "22:00"
+    close: "22:00"
+  active_timeframes: ["15m", "1h", "4h", "1d"]
+  primary_timeframe: "1h"
+  fundamental_weight: 0.35
+  technical_weight: 0.65
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  signal_decay:
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+
+USDJPY:
+  pip_size: 0.01
+  lot_size: 100000
+  session_hours:
+    open: "22:00"
+    close: "22:00"
+  active_timeframes: ["15m", "1h", "4h", "1d"]
+  primary_timeframe: "1h"
+  fundamental_weight: 0.4
+  technical_weight: 0.6
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  signal_decay:
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+
+XAUUSD:
+  pip_size: 0.01
+  lot_size: 100          # 1 lot = 100 oz
+  session_hours:
+    open: "22:00"
+    close: "21:59"       # Gold follows commodities session; close slightly before FX weekly close
+  active_timeframes: ["15m", "1h", "4h", "1d"]
+  primary_timeframe: "1h"
+  fundamental_weight: 0.5   # Gold is more macro-driven than FX pairs
+  technical_weight: 0.5
+  max_position_lots: 0.5    # smaller due to larger lot value
+  news_halt_minutes: 45     # Gold is more volatile around CPI/NFP
+  signal_decay:
+    central_bank: 72        # rate decisions move Gold for longer
+    economic_data: 6
+    geopolitical: 12        # geopolitical premium lingers in Gold
+    market_risk: 4
+    technical_conf: 1

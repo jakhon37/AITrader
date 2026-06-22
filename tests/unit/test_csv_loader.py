@@ -89,3 +89,36 @@ def test_load_ohlcv_csv_detects_timestamp_column() -> None:
         assert len(df) == 1
     finally:
         path.unlink(missing_ok=True)
+
+
+def test_load_ohlcv_csv_semicolon_delimited() -> None:
+    """Verify loading from semicolon-delimited CSV works."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Local time;Open;High;Low;Close;Volume\n")
+        f.write("2026.06-01 10:00:00.000;1.085;1.086;1.084;1.0855;12.5\n")
+        path = Path(f.name)
+    try:
+        df = load_ohlcv_csv(path)
+        assert len(df) == 1
+        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert df["close"].iloc[0] == 1.0855
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_load_ohlcv_csv_headerless_histdata() -> None:
+    """Verify loading from headerless CSV with HistData date format works."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        # HistData format: YYYYMMDD HHMMSS;Open;High;Low;Close;Volume
+        f.write("20260601 170000;1.0845;1.0848;1.0842;1.0846;100.0\n")
+        path = Path(f.name)
+    try:
+        df = load_ohlcv_csv(path)
+        assert len(df) == 1
+        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert df.index[0] == pd.Timestamp("2026-06-01 17:00:00")
+        assert df["close"].iloc[0] == 1.0846
+    finally:
+        path.unlink(missing_ok=True)

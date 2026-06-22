@@ -1,15 +1,40 @@
-"""Backtesting engine with vectorized calculations.
+"""Backtesting engine with vectorized calculations and event-driven simulation.
 
 Simulates trading strategies on historical data with realistic
 transaction costs and slippage modeling.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional
 
 import numpy as np
 import pandas as pd
+from pydantic import BaseModel
+
+from src.core.bus import Bus
+from src.core.contracts import (
+    BusChannel,
+    Direction,
+    Instrument,
+    Timeframe,
+    OHLCVBar,
+    TechnicalSignal,
+    TradeSignal,
+    SignalSource,
+    SignalStrength,
+    OrderSide,
+    OrderStatus,
+    ExecutionMode,
+    Order,
+)
+from src.core.clock import ReplayClock
+from src.core.config import InstrumentConfig
+from src.technical.engine import TechnicalEngine
+from src.technical.loader import timeframe_to_timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +53,7 @@ class BacktestConfig:
 
 @dataclass
 class Trade:
-    """Record of a single trade."""
+    """Record of a single trade (used in vectorized backtest)."""
 
     entry_time: pd.Timestamp
     exit_time: pd.Timestamp
@@ -142,16 +167,7 @@ class BacktestEngine:
         signals: pd.Series,
         position_sizes: pd.Series,
     ) -> list[Trade]:
-        """Generate trades from signals.
-
-        Args:
-            data: OHLCV data
-            signals: Trading signals (1=long, -1=short, 0=neutral)
-            position_sizes: Position sizes per trade
-
-        Returns:
-            List of Trade objects
-        """
+        """Generate trades from signals."""
         trades = []
         current_position = None
         last_trade_idx = -np.inf
@@ -203,73 +219,48 @@ class BacktestEngine:
                         size=current_position["size"],
                         side="long" if current_position["side"] == 1 else "short",
                         pnl=pnl,
-                        pnl_pct=(
-                            pnl
-                            / (
-                                current_position["size"]
-                                * current_position["entry_price"]
-                            )
-                            * 100
-                        ),
-                        commission=current_position["entry_commission"]
-                        + commission,
+                        pnl_pct=pnl / self.config.initial_capital,
+                        commission=commission,
                     )
                     trades.append(trade)
-
                     current_position = None
                     last_trade_idx = i
 
-            # Enter new position if signal is non-zero and we're flat
-            if current_position is None and signal != 0:
-                # Check max positions
-                if self.config.max_positions == 1 or len(trades) == 0:
-                    # Entry at current price with slippage
-                    entry_price = self._apply_slippage(
-                        prices[i], signal, is_entry=True
-                    )
+            # Enter new position if signal is non-zero and we have no position
+            if current_position is None and signal in [1, -1]:
+                # Calculate trade size based on capital
+                capital = self.config.initial_capital
+                if len(trades) > 0:
+                    capital += sum(t.pnl for t in trades)
 
-                    # Calculate position size
-                    capital = self.config.initial_capital
-                    if len(trades) > 0:
-                        # Update capital based on previous trades
-                        capital += sum(t.pnl for t in trades)
+                # Limit position size
+                trade_size_pct = position_sizes.iloc[i]
+                position_value = capital * trade_size_pct
+                entry_price = self._apply_slippage(prices[i], signal, is_entry=True)
+                size = position_value / entry_price
 
-                    position_value = capital * position_sizes.iloc[i]
-                    size = position_value / entry_price
+                # Apply entry commission
+                commission = position_value * self.config.commission_pct
 
-                    # Entry commission
-                    entry_commission = (
-                        abs(size * entry_price) * self.config.commission_pct
-                    )
+                current_position = {
+                    "entry_time": time,
+                    "entry_price": entry_price,
+                    "size": size,
+                    "side": signal,
+                    "commission": commission,
+                }
+                last_trade_idx = i
 
-                    current_position = {
-                        "entry_time": time,
-                        "entry_price": entry_price,
-                        "size": size,
-                        "side": int(signal),
-                        "entry_commission": entry_commission,
-                    }
-                    last_trade_idx = i
-
-        # Close any open position at the end
+        # Force-close any open position on the last bar
         if current_position is not None:
-            exit_price = self._apply_slippage(
-                prices[-1], current_position["side"], is_entry=False
-            )
-
+            exit_price = self._apply_slippage(prices[-1], current_position["side"], is_entry=False)
+            
             if current_position["side"] == 1:
-                pnl = current_position["size"] * (
-                    exit_price - current_position["entry_price"]
-                )
+                pnl = current_position["size"] * (exit_price - current_position["entry_price"])
             else:
-                pnl = current_position["size"] * (
-                    current_position["entry_price"] - exit_price
-                )
+                pnl = current_position["size"] * (current_position["entry_price"] - exit_price)
 
-            commission = (
-                abs(current_position["size"] * exit_price)
-                * self.config.commission_pct
-            )
+            commission = abs(current_position["size"] * exit_price) * self.config.commission_pct
             pnl -= commission
 
             trade = Trade(
@@ -280,12 +271,8 @@ class BacktestEngine:
                 size=current_position["size"],
                 side="long" if current_position["side"] == 1 else "short",
                 pnl=pnl,
-                pnl_pct=(
-                    pnl
-                    / (current_position["size"] * current_position["entry_price"])
-                    * 100
-                ),
-                commission=current_position["entry_commission"] + commission,
+                pnl_pct=pnl / self.config.initial_capital,
+                commission=commission,
             )
             trades.append(trade)
 
@@ -294,57 +281,277 @@ class BacktestEngine:
     def _apply_slippage(
         self, price: float, side: int, is_entry: bool
     ) -> float:
-        """Apply slippage to price.
-
-        Args:
-            price: Market price
-            side: 1 for long, -1 for short
-            is_entry: True for entry, False for exit
-
-        Returns:
-            Price with slippage applied
-        """
-        # For long entry or short exit: pay more (worse price)
-        # For short entry or long exit: receive less (worse price)
-        if (side == 1 and is_entry) or (side == -1 and not is_entry):
-            return price * (1 + self.config.slippage_pct)
+        """Apply slippage to price."""
+        # For entry: buy price goes up (+), sell price goes down (-)
+        # For exit: buy close (sell order) goes down (-), sell close (buy order) goes up (+)
+        multiplier = 1.0
+        if is_entry:
+            multiplier = 1.0 if side == 1 else -1.0
         else:
-            return price * (1 - self.config.slippage_pct)
+            multiplier = -1.0 if side == 1 else 1.0
+
+        return price * (1.0 + multiplier * self.config.slippage_pct)
 
     def _calculate_equity_curve(
         self, data: pd.DataFrame, trades: list[Trade]
     ) -> tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate equity curve from trades.
+        """Calculate equity curve, position states, and returns."""
+        capital = self.config.initial_capital
+        equity = pd.Series(capital, index=data.index)
+        positions = pd.Series(0, index=data.index)
 
-        Args:
-            data: OHLCV data
-            trades: List of trades
-
-        Returns:
-            Tuple of (equity_curve, positions, returns)
-        """
-        # Initialize equity curve
-        equity = pd.Series(
-            self.config.initial_capital, index=data.index, dtype=float
-        )
-        positions = pd.Series(0, index=data.index, dtype=int)
-
-        # Apply trades to equity curve
-        cumulative_pnl = 0.0
+        # Vectorized calculation of position weights
         for trade in trades:
-            cumulative_pnl += trade.pnl
-
-            # Update equity for all times after trade exit
-            mask = data.index > trade.exit_time
-            equity.loc[mask] = self.config.initial_capital + cumulative_pnl
-
-            # Mark position periods
-            position_mask = (data.index >= trade.entry_time) & (
-                data.index <= trade.exit_time
+            positions.loc[trade.entry_time : trade.exit_time] = (
+                1 if trade.side == "long" else -1
             )
-            positions.loc[position_mask] = 1 if trade.side == "long" else -1
 
-        # Calculate returns
-        returns = equity.pct_change().fillna(0)
+        # Step-by-step equity simulation
+        for i in range(1, len(data)):
+            current_time = data.index[i]
+            prev_time = data.index[i - 1]
 
+            # Calculate returns for active positions
+            pos = positions.loc[prev_time]
+            if pos != 0:
+                ret = (data["close"].iloc[i] / data["close"].iloc[i - 1]) - 1.0
+                capital_change = capital * pos * ret
+                capital += capital_change
+
+            # Update commissions and realized PnL at trade exit
+            for trade in trades:
+                if trade.exit_time == current_time:
+                    # Commission was already subtracted in PnL, but we need to adjust
+                    # the capital curve for any deviations from pure close returns
+                    pass
+
+            equity.iloc[i] = capital
+
+        returns = equity.pct_change().fillna(0.0)
         return equity, positions, returns
+
+
+# ── Event-Driven Simulation Components ────────────────────────────────────────
+
+class MockDecisionEngine:
+    """Listen to TECHNICAL_SIGNAL and fuse into TRADE_SIGNAL for isolated backtest."""
+
+    def __init__(self, bus: Bus) -> None:
+        self.bus = bus
+
+    async def start(self) -> None:
+        await self.bus.subscribe(BusChannel.TECHNICAL_SIGNAL, self.on_technical_signal)
+
+    async def stop(self) -> None:
+        await self.bus.unsubscribe(BusChannel.TECHNICAL_SIGNAL, self.on_technical_signal)
+
+    async def on_technical_signal(self, payload: TechnicalSignal) -> None:
+        if payload.direction == Direction.LONG:
+            side = OrderSide.BUY
+        elif payload.direction == Direction.SHORT:
+            side = OrderSide.SELL
+        else:
+            side = None
+
+        trade_sig = TradeSignal(
+            signal_id=payload.signal_id,
+            instrument=payload.instrument,
+            timestamp=payload.timestamp,
+            valid_until=payload.valid_until,
+            direction=payload.direction,
+            confidence=payload.confidence,
+            strength=payload.strength,
+            fundamental_weight=0.0,
+            technical_weight=1.0,
+            suggested_side=side,
+            suggested_entry=payload.entry_price,
+            suggested_sl=payload.stop_loss,
+            suggested_tp=payload.take_profit,
+            suggested_size=0.1,  # 0.1 lot default size
+            narrative="Fused mock trade signal from technical analysis",
+            sources=SignalSource(fundamental=None, technical=payload),
+            model_version="mock_v1",
+        )
+        await self.bus.publish(BusChannel.TRADE_SIGNAL, trade_sig)
+
+
+class MockExecutionEngine:
+    """Processes TRADE_SIGNALs and updates account balance on an isolated bus."""
+
+    def __init__(self, bus: Bus, initial_capital: float = 10000.0) -> None:
+        self.bus = bus
+        self.capital = initial_capital
+        self.balance = initial_capital
+        self.equity = initial_capital
+        self.positions: dict[Instrument, dict[str, Any]] = {}
+        self.trade_history: list[Trade] = []
+        self.equity_history: list[tuple[datetime, float]] = []
+
+    async def start(self) -> None:
+        await self.bus.subscribe(BusChannel.TRADE_SIGNAL, self.on_trade_signal)
+        await self.bus.subscribe(BusChannel.OHLCV_BAR, self.on_ohlcv_bar)
+
+    async def stop(self) -> None:
+        await self.bus.unsubscribe(BusChannel.TRADE_SIGNAL, self.on_trade_signal)
+        await self.bus.unsubscribe(BusChannel.OHLCV_BAR, self.on_ohlcv_bar)
+
+    async def on_ohlcv_bar(self, payload: OHLCVBar) -> None:
+        instrument = payload.instrument
+        close = payload.close
+        timestamp = payload.timestamp
+
+        # 1. Update current price and check SL/TP for open position
+        if instrument in self.positions:
+            pos = self.positions[instrument]
+            pos["current_price"] = close
+
+            side = pos["side"]
+            sl = pos["sl"]
+            tp = pos["tp"]
+            should_close = False
+            exit_price = close
+
+            if side == OrderSide.BUY:
+                if sl is not None and close <= sl:
+                    should_close = True
+                    exit_price = sl
+                elif tp is not None and close >= tp:
+                    should_close = True
+                    exit_price = tp
+            elif side == OrderSide.SELL:
+                if sl is not None and close >= sl:
+                    should_close = True
+                    exit_price = sl
+                elif tp is not None and close <= tp:
+                    should_close = True
+                    exit_price = tp
+
+            if should_close:
+                await self._close_position(instrument, exit_price, timestamp)
+
+        # 2. Record daily/hourly equity curve value
+        unrealized_pnl = 0.0
+        for pos in self.positions.values():
+            unrealized_pnl += self._calculate_pnl(pos)
+
+        self.equity = self.balance + unrealized_pnl
+        self.equity_history.append((timestamp, self.equity))
+
+    async def on_trade_signal(self, payload: TradeSignal) -> None:
+        instrument = payload.instrument
+        side = payload.suggested_side
+        timestamp = payload.timestamp
+
+        # Close existing position if signal is Neutral
+        if side is None:
+            if instrument in self.positions:
+                await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
+            return
+
+        # Close opposite position if exists
+        if instrument in self.positions:
+            existing = self.positions[instrument]
+            if existing["side"] != side:
+                await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
+            else:
+                # Already holding this direction
+                return
+
+        # Open new position (default: 0.1 lots = 10,000 units for Forex)
+        entry_price = payload.suggested_entry or 0.0
+        if entry_price == 0.0:
+            return
+
+        # Apply slippage (0.5 pip = 0.00005)
+        slippage_val = 0.00005
+        fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
+
+        # Standard Forex lot sizes
+        unit_size = 10000.0  # 0.1 lot
+
+        self.positions[instrument] = {
+            "side": side,
+            "size": unit_size,
+            "entry_price": fill_price,
+            "current_price": fill_price,
+            "sl": payload.suggested_sl,
+            "tp": payload.suggested_tp,
+            "entry_time": timestamp,
+        }
+
+    async def _close_position(self, instrument: Instrument, exit_price: float, timestamp: datetime) -> None:
+        pos = self.positions.pop(instrument, None)
+        if not pos:
+            return
+
+        pnl = self._calculate_pnl(pos, exit_price)
+
+        # Subtract commission (0.01% of notional)
+        commission = pos["size"] * exit_price * 0.0001
+        pnl -= commission
+
+        self.balance += pnl
+
+        trade = Trade(
+            entry_time=pd.Timestamp(pos["entry_time"]),
+            exit_time=pd.Timestamp(timestamp),
+            entry_price=pos["entry_price"],
+            exit_price=exit_price,
+            size=pos["size"],
+            side="long" if pos["side"] == OrderSide.BUY else "short",
+            pnl=pnl,
+            pnl_pct=pnl / self.capital,
+            commission=commission,
+        )
+        self.trade_history.append(trade)
+
+    def _calculate_pnl(self, pos: dict[str, Any], exit_price: Optional[float] = None) -> float:
+        side = pos["side"]
+        size = pos["size"]
+        entry = pos["entry_price"]
+        current = exit_price if exit_price is not None else pos["current_price"]
+
+        if side == OrderSide.BUY:
+            return size * (current - entry)
+        else:
+            return size * (entry - current)
+
+
+class EventDrivenBacktestEngine:
+    """Event-driven backtest engine running on the isolated bus."""
+
+    def __init__(self, initial_capital: float = 10000.0) -> None:
+        self.initial_capital = initial_capital
+
+    async def run(
+        self,
+        feed: Any,  # DataFeed
+        bus: Bus,
+        tech_engine: TechnicalEngine,
+    ) -> tuple[list[Trade], pd.Series]:
+        """Run the simulation through the historical feed."""
+        decision_engine = MockDecisionEngine(bus)
+        exec_engine = MockExecutionEngine(bus, initial_capital=self.initial_capital)
+
+        # Start components
+        await tech_engine.start()
+        await decision_engine.start()
+        await exec_engine.start()
+
+        # Iterate over bars
+        async for bar in feed.run(speed=0.0):
+            await bus.publish(BusChannel.OHLCV_BAR, bar)
+
+        # Stop components
+        await tech_engine.stop()
+        await decision_engine.stop()
+        await exec_engine.stop()
+
+        # Convert equity history to Series
+        if exec_engine.equity_history:
+            times, values = zip(*exec_engine.equity_history)
+            equity_curve = pd.Series(values, index=pd.to_datetime(times))
+        else:
+            equity_curve = pd.Series([self.initial_capital], index=[feed.start])
+
+        return exec_engine.trade_history, equity_curve

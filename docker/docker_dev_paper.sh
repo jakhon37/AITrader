@@ -70,9 +70,15 @@ echo "⏱️  Interval: ${INTERVAL}s"
 echo "📅 Timeframe: $TIMEFRAME"
 echo ""
 
+ENV_FILE_ARG=""
+if [ -f "$PROJECT_DIR/.env" ]; then
+    ENV_FILE_ARG="--env-file $PROJECT_DIR/.env"
+fi
+
 # Run paper trading with local code mounted
 docker run -it --rm \
     --name aitrader-dev-paper \
+    $ENV_FILE_ARG \
     -v "$PROJECT_DIR/src:/app/src:ro" \
     -v "$PROJECT_DIR/scripts:/app/scripts:ro" \
     -v "$PROJECT_DIR/config:/app/config:ro" \

@@ -1,14 +1,19 @@
 """Immutable audit log for all trading actions."""
 
+from __future__ import annotations
+
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from src.core.clock import now
+from src.core.logging import get_logger
+
+_log = get_logger("D06-EXECUTION")
 
 
 class EventType(Enum):
@@ -36,6 +41,7 @@ class AuditEvent:
     timestamp: datetime
     event_type: EventType
     message: str
+    signal_id: str
     data: dict[str, Any]
     user: str = "system"
 
@@ -45,6 +51,7 @@ class AuditEvent:
             "timestamp": self.timestamp.isoformat(),
             "event_type": self.event_type.value,
             "message": self.message,
+            "signal_id": self.signal_id,
             "data": self.data,
             "user": self.user,
         }
@@ -72,15 +79,16 @@ class AuditLog:
         if not self.log_file.exists():
             self.log_file.touch()
 
-        logger.info(f"Audit log initialized: {self.log_file}")
+        _log.info("audit_log_initialized", path=str(self.log_file))
 
         # Log initialization
-        self.log(EventType.SYSTEM_START, "Audit log initialized", {})
+        self.log(EventType.SYSTEM_START, "Audit log initialized", "unknown", {})
 
     def log(
         self,
         event_type: EventType,
         message: str,
+        signal_id: str = "unknown",
         data: Optional[dict[str, Any]] = None,
         user: str = "system",
     ) -> None:
@@ -89,13 +97,15 @@ class AuditLog:
         Args:
             event_type: Type of event
             message: Human-readable message
+            signal_id: Signal correlation ID
             data: Additional data to log
             user: User who triggered the event
         """
         event = AuditEvent(
-            timestamp=datetime.now(),
+            timestamp=now(),
             event_type=event_type,
             message=message,
+            signal_id=signal_id,
             data=data or {},
             user=user,
         )
@@ -105,58 +115,68 @@ class AuditLog:
             f.write(json.dumps(event.to_dict()) + "\n")
 
         # Also log to standard logger
-        logger.info(f"AUDIT: {event_type.value} - {message}")
+        _log.info(
+            "audit_event_recorded",
+            event_type=event_type.value,
+            message=message,
+            signal_id=signal_id,
+        )
 
     def log_position_open(
-        self, symbol: str, side: str, price: float, size: float, **kwargs
+        self, symbol: str, side: str, price: float, size: float, signal_id: str = "unknown", **kwargs: Any
     ) -> None:
         """Log position opening."""
         self.log(
             EventType.POSITION_OPEN,
             f"Opened {side} position: {symbol}",
+            signal_id,
             {"symbol": symbol, "side": side, "price": price, "size": size, **kwargs},
         )
 
     def log_position_close(
-        self, symbol: str, price: float, pnl: float, **kwargs
+        self, symbol: str, price: float, pnl: float, signal_id: str = "unknown", **kwargs: Any
     ) -> None:
         """Log position closing."""
         self.log(
             EventType.POSITION_CLOSE,
             f"Closed position: {symbol}, PnL=${pnl:,.2f}",
+            signal_id,
             {"symbol": symbol, "price": price, "pnl": pnl, **kwargs},
         )
 
-    def log_signal(self, symbol: str, signal: int, confidence: float = 0.0) -> None:
+    def log_signal(self, symbol: str, signal: int, confidence: float = 0.0, signal_id: str = "unknown") -> None:
         """Log trading signal generation."""
         self.log(
             EventType.SIGNAL_GENERATED,
             f"Signal generated: {symbol} = {signal}",
+            signal_id,
             {"symbol": symbol, "signal": signal, "confidence": confidence},
         )
 
-    def log_risk_violation(self, violation_type: str, details: str) -> None:
+    def log_risk_violation(self, violation_type: str, details: str, signal_id: str = "unknown") -> None:
         """Log risk violation."""
         self.log(
             EventType.RISK_VIOLATION,
             f"Risk violation: {violation_type}",
+            signal_id,
             {"violation_type": violation_type, "details": details},
         )
 
-    def log_circuit_breaker(self, action: str, reason: str) -> None:
+    def log_circuit_breaker(self, action: str, reason: str, signal_id: str = "unknown") -> None:
         """Log circuit breaker action."""
         event_type = (
             EventType.CIRCUIT_BREAKER_HALT
             if action == "halt"
             else EventType.CIRCUIT_BREAKER_RESUME
         )
-        self.log(event_type, f"Circuit breaker {action}", {"reason": reason})
+        self.log(event_type, f"Circuit breaker {action}", signal_id, {"reason": reason})
 
-    def log_error(self, error_type: str, error_message: str, **kwargs) -> None:
+    def log_error(self, error_type: str, error_message: str, signal_id: str = "unknown", **kwargs: Any) -> None:
         """Log error."""
         self.log(
             EventType.ERROR,
             f"Error: {error_type}",
+            signal_id,
             {"error_type": error_type, "error_message": error_message, **kwargs},
         )
 
@@ -204,6 +224,7 @@ class AuditLog:
                 if limit and len(events) >= limit:
                     break
 
+                # Force timezone-aware matching
         return events
 
     def get_stats(self) -> dict:

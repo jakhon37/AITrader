@@ -1,0 +1,110 @@
+import { useEffect, useRef, useState } from 'react';
+import { useSignalsStore } from '../store/signals';
+import { usePortfolioStore } from '../store/portfolio';
+import type { TradeSignal, FundamentalSignal, TechnicalSignal, PortfolioState, WsMessage } from '../types';
+
+const WS_URL = 'ws://localhost:8000/ws';
+const RECONNECT_INITIAL_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
+
+export function useWebSocket() {
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectDelay = useRef(RECONNECT_INITIAL_MS);
+  const isMounted = useRef(true);
+
+  const { addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv } = useSignalsStore();
+  const { setPortfolio } = usePortfolioStore();
+
+  useEffect(() => {
+    isMounted.current = true;
+
+    function connect() {
+      if (!isMounted.current) return;
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (!isMounted.current) return;
+        setConnected(true);
+        reconnectDelay.current = RECONNECT_INITIAL_MS;
+      };
+
+      ws.onmessage = (event: MessageEvent) => {
+        try {
+          const msg: WsMessage = JSON.parse(event.data as string);
+          const data = msg.data as Record<string, unknown>;
+          switch (msg.type) {
+            case 'trade_signal':
+              addTradeSignal(data as unknown as TradeSignal);
+              break;
+            case 'fundamental_signal':
+              addFundamentalSignal(data as unknown as FundamentalSignal);
+              break;
+            case 'technical_signal':
+              setTechnicalSignal(data as unknown as TechnicalSignal);
+              break;
+            case 'portfolio_update':
+              setPortfolio(data as unknown as PortfolioState);
+              break;
+            case 'system_health':
+              setHealthDiv(data as unknown as { status: string; division: string });
+              break;
+            case 'ohlcv_bar': {
+              const barData = data as any;
+              const dt = new Date(barData.timestamp);
+              const unixSeconds = Math.floor(dt.getTime() / 1000);
+              const bar = {
+                time: unixSeconds,
+                open: barData.open,
+                high: barData.high,
+                low: barData.low,
+                close: barData.close,
+                volume: barData.volume,
+              };
+              window.dispatchEvent(
+                new CustomEvent('ohlcv_bar', {
+                  detail: {
+                    instrument: barData.instrument,
+                    timeframe: barData.timeframe,
+                    bar,
+                  },
+                })
+              );
+              break;
+            }
+            case 'replay_frame': {
+              const frameData = data as any;
+              window.dispatchEvent(
+                new CustomEvent('replay_frame', {
+                  detail: frameData,
+                })
+              );
+              break;
+            }
+          }
+        } catch (err) {
+          console.error('WS parse error', err);
+        }
+      };
+
+      ws.onclose = () => {
+        if (!isMounted.current) return;
+        setConnected(false);
+        const delay = reconnectDelay.current;
+        reconnectDelay.current = Math.min(delay * 2, RECONNECT_MAX_MS);
+        setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => { ws.close(); };
+    }
+
+    connect();
+    return () => {
+      isMounted.current = false;
+      wsRef.current?.close();
+    };
+  }, [addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setPortfolio]);
+
+  return { connected, ws: wsRef };
+}

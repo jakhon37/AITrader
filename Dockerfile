@@ -1,6 +1,8 @@
 # AITrader Dockerfile - Environment Only
 # This creates a lightweight Python environment without project files
 # Project files are mounted at runtime by docker_dev_*.sh scripts
+#  agy --conversation=2d5d5148-75e8-4af1-91ea-e57d75c1c4f5 
+#  agy --conversation=2e943271-0320-4fba-afea-64e1d4d4ed8b
 
 FROM python:3.12-slim
 
@@ -53,8 +55,17 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
         plotly>=5.0 \
         seaborn>=0.12 \
         mplfinance>=0.12 \
+        pyarrow>=14.0 \
         pytest>=7.0 \
-        pytest-cov>=4.0
+        pytest-cov>=4.0 \
+        pytest-asyncio>=0.23 \
+        transformers \
+        huggingface-hub \
+        httpx \
+        fastapi \
+        uvicorn \
+        websockets
+
 
 # Create necessary directories (will be populated by mounted volumes)
 RUN mkdir -p logs data models reports config src tests scripts dashboards
@@ -64,7 +75,7 @@ EXPOSE 8501 8502
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app/src:/app
 ENV CONFIG_DIR=/app/config
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_SERVER_FILE_WATCHER_TYPE=none

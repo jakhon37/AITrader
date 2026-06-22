@@ -26,15 +26,23 @@ dependencies = [
   "pyyaml>=6.0",
   "pandas>=3.0",
   "numpy>=2.0",
+  "pyarrow>=14.0",
   "pandas-ta>=0.4.67b0",
   "hmmlearn>=0.3.0",
   "scipy>=1.10",
+  "transformers>=4.0.0",
+  "huggingface-hub>=0.10.0",
+  "httpx>=0.24.0",
+  "fastapi>=0.100.0",
+  "uvicorn>=0.20.0",
+  "websockets>=11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=7.0",
   "pytest-cov>=4.0",
+  "pytest-asyncio>=0.23",
   "ruff>=0.1.0",
   "mypy>=1.0",
   "pre-commit>=3.0",
@@ -94,13 +102,14 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-v --tb=short"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
   "integration: integration tests (data, backtest, execution)",
   "e2e: end-to-end tests (deterministic backtest)",
 ]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["src"]

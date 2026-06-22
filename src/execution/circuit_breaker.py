@@ -1,10 +1,15 @@
 """Circuit breaker for automatic trading halt."""
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional
+from typing import Dict, List, Optional
+
+from src.core.clock import now
+from src.core.contracts import EconomicEvent, Instrument
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +24,7 @@ class HaltReason(Enum):
     EXECUTION_ERROR = "execution_error"
     DATA_ANOMALY = "data_anomaly"
     RISK_VIOLATION = "risk_violation"
+    NEWS_HALT = "news_halt"
 
 
 @dataclass
@@ -27,7 +33,7 @@ class CircuitBreakerConfig:
 
     # Loss-based triggers
     max_daily_loss: float = 0.03  # 3% daily loss triggers halt
-    max_consecutive_losses: int = 5  # 5 losses in a row triggers halt
+    max_consecutive_losses: int = 3  # 3 losses in a row triggers halt (per spec)
     rapid_loss_threshold: float = 0.02  # 2% loss in short period
     rapid_loss_period: int = 300  # 5 minutes
 
@@ -48,7 +54,7 @@ class CircuitBreakerState:
     halt_time: Optional[datetime]
     consecutive_losses: int
     consecutive_errors: int
-    last_loss_times: list[datetime]
+    last_loss_times: List[datetime]
     resume_time: Optional[datetime]
 
 
@@ -75,11 +81,14 @@ class CircuitBreaker:
         # Track consecutive events
         self.consecutive_losses = 0
         self.consecutive_errors = 0
-        self.last_loss_times: list[datetime] = []
+        self.last_loss_times: List[datetime] = []
 
         # Track daily stats
-        self.daily_reset_time = datetime.now()
+        self.daily_reset_time = now()
         self.daily_start_value = initial_capital
+
+        # Track instrument-specific news halts: Instrument -> list of (start_time, end_time)
+        self._news_halts: Dict[Instrument, List[tuple[datetime, datetime]]] = {}
 
         logger.info("Circuit breaker initialized")
 
@@ -92,19 +101,19 @@ class CircuitBreaker:
         Returns:
             Tuple of (should_halt, reason)
         """
+        current_time = now()
+
+        # Check auto-resume first
+        if self.is_halted and self.resume_time and current_time >= self.resume_time:
+            self.resume("Auto-resume timer expired")
+
         # Already halted
         if self.is_halted:
             return True, self.halt_reason
 
-        # Check auto-resume
-        if self.resume_time and datetime.now() >= self.resume_time:
-            self.resume("Auto-resume timer expired")
-            return False, None
-
-        # Check daily loss
-        now = datetime.now()
-        if now.date() > self.daily_reset_time.date():
-            self.daily_reset_time = now
+        # Check daily reset
+        if current_time.date() > self.daily_reset_time.date():
+            self.daily_reset_time = current_time
             self.daily_start_value = portfolio_value
 
         daily_loss = (portfolio_value - self.daily_start_value) / self.daily_start_value
@@ -133,16 +142,16 @@ class CircuitBreaker:
         Args:
             is_win: Whether the trade was profitable
         """
+        current_time = now()
         if is_win:
             self.consecutive_losses = 0
-            # Remove old loss times
             self.last_loss_times = []
         else:
             self.consecutive_losses += 1
-            self.last_loss_times.append(datetime.now())
+            self.last_loss_times.append(current_time)
 
             # Keep only recent losses
-            cutoff_time = datetime.now() - timedelta(seconds=self.config.rapid_loss_period)
+            cutoff_time = current_time - timedelta(seconds=self.config.rapid_loss_period)
             self.last_loss_times = [t for t in self.last_loss_times if t > cutoff_time]
 
     def record_error(self) -> None:
@@ -165,13 +174,17 @@ class CircuitBreaker:
             logger.warning("Trading already halted")
             return
 
+        current_time = now()
         self.is_halted = True
         self.halt_reason = reason
-        self.halt_time = datetime.now()
+        self.halt_time = current_time
 
-        # Set auto-resume if enabled
-        if self.config.auto_resume_enabled:
-            self.resume_time = datetime.now() + timedelta(
+        # Set auto-resume if enabled, or if it's consecutive losses (RAPID_LOSSES)
+        if reason == HaltReason.RAPID_LOSSES:
+            self.resume_time = current_time + timedelta(hours=2)
+            logger.warning(f"🛑 TRADING HALTED due to consecutive losses (auto-resume in 2 hours)")
+        elif self.config.auto_resume_enabled:
+            self.resume_time = current_time + timedelta(
                 seconds=self.config.auto_resume_delay
             )
             logger.warning(
@@ -204,6 +217,35 @@ class CircuitBreaker:
         self.consecutive_errors = 0
         self.last_loss_times = []
 
+    def handle_economic_event(self, event: EconomicEvent, news_halt_minutes: int) -> None:
+        """Record a scheduled high-impact news event window to restrict trading on affected pairs."""
+        if event.impact != "high":
+            return
+
+        # Start and end boundaries of the news halt
+        start = event.timestamp - timedelta(minutes=news_halt_minutes)
+        end = event.timestamp + timedelta(minutes=news_halt_minutes)
+
+        for inst in event.affected_pairs:
+            if inst not in self._news_halts:
+                self._news_halts[inst] = []
+            self._news_halts[inst].append((start, end))
+
+        logger.info(
+            "circuit_breaker_news_halt_scheduled",
+            event=event.name,
+            start=start.isoformat(),
+            end=end.isoformat(),
+            pairs=[p.value for p in event.affected_pairs],
+        )
+
+    def clean_old_halts(self, current_time: datetime) -> None:
+        """Purge past news halt intervals to conserve memory."""
+        for inst in list(self._news_halts.keys()):
+            self._news_halts[inst] = [
+                (start, end) for start, end in self._news_halts[inst] if end >= current_time
+            ]
+
     def get_state(self) -> CircuitBreakerState:
         """Get current circuit breaker state."""
         return CircuitBreakerState(
@@ -216,6 +258,19 @@ class CircuitBreaker:
             resume_time=self.resume_time,
         )
 
-    def is_trading_allowed(self) -> bool:
-        """Check if trading is currently allowed."""
-        return not self.is_halted
+    def is_trading_allowed(self, instrument: Optional[Instrument] = None, current_time: Optional[datetime] = None) -> bool:
+        """Check if trading is currently allowed, accounting for manual halts and active news halts."""
+        if self.is_halted:
+            return False
+
+        if instrument is not None:
+            t = current_time or now()
+            self.clean_old_halts(t)
+
+            windows = self._news_halts.get(instrument, [])
+            for start, end in windows:
+                if start <= t <= end:
+                    logger.warning(f"Trading blocked on {instrument.value} due to active news halt.")
+                    return False
+
+        return True
