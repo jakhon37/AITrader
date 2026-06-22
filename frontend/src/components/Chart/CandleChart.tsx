@@ -41,6 +41,22 @@ const findClosestIndex = (data: { time: number }[], targetTime: number): number 
   return closestIdx;
 };
 
+const isTradingBar = (bar: { time: number; open: number; close: number; volume?: number }): boolean => {
+  const dt = new Date(bar.time * 1000);
+  const day = dt.getUTCDay();
+  const hour = dt.getUTCHours();
+
+  if (day === 6) return false;
+  if (day === 5 && hour >= 22) return false;
+  if (day === 0 && hour < 22) return false;
+
+  if (bar.volume !== undefined && bar.volume === 0 && bar.open === bar.close) {
+    return false;
+  }
+
+  return true;
+};
+
 export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -131,6 +147,7 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
     // Stable update function
     updateBarRef.current = (bar) => {
       if (!candleRef.current || !volumeRef.current) return;
+      if (!isTradingBar(bar)) return;
 
       if (hasNewerHistory) {
         // If we have evicted newer history, just update existing bar if present,
@@ -204,12 +221,14 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
           return;
         }
 
+        const filtered = data.filter(isTradingBar);
+
         // Respect MAX_BUFFER in initial load
-        if (data.length > MAX_BUFFER) {
-          loadedData = data.slice(data.length - MAX_BUFFER);
+        if (filtered.length > MAX_BUFFER) {
+          loadedData = filtered.slice(filtered.length - MAX_BUFFER);
           hasMoreHistory = true;
         } else {
-          loadedData = data;
+          loadedData = filtered;
         }
 
         candleSeries.setData(loadedData.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
@@ -254,8 +273,8 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
             return;
           }
 
-          // Exclude overlap
-          const filteredChunk = newChunk.filter((d) => d.time < oldestTime);
+          // Filter weekends/holidays and exclude overlap
+          const filteredChunk = newChunk.filter(isTradingBar).filter((d) => d.time < oldestTime);
           if (filteredChunk.length === 0) {
             hasMoreHistory = false;
             return;
@@ -318,8 +337,8 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
             return;
           }
 
-          // Exclude overlap
-          const filteredChunk = newChunk.filter((d) => d.time > newestTime);
+          // Filter weekends/holidays and exclude overlap
+          const filteredChunk = newChunk.filter(isTradingBar).filter((d) => d.time > newestTime);
           if (filteredChunk.length === 0) {
             hasNewerHistory = false;
             return;
