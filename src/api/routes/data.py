@@ -1,18 +1,154 @@
-"""FastAPI data endpoints serving historical charts, news, and economic events."""
-
-from __future__ import annotations
-
 import logging
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
+import asyncio
 
 from src.core.contracts import Instrument, Timeframe
 from src.core.exceptions import DataError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/data", tags=["data"])
+
+
+# yfinance symbol mapping
+SYMBOL_MAP = {
+    Instrument.EURUSD: "EURUSD=X",
+    Instrument.GBPUSD: "GBPUSD=X",
+    Instrument.USDJPY: "USDJPY=X",
+    Instrument.XAUUSD: "GC=F",
+}
+
+# Timeframe mapping
+TF_MAP = {
+    Timeframe.M1:  "1m",
+    Timeframe.M5:  "5m",
+    Timeframe.M15: "15m",
+    Timeframe.M30: "30m",
+    Timeframe.H1:  "1h",
+    Timeframe.H4:  "1h",   # resample from 1h
+    Timeframe.D1:  "1d",
+    Timeframe.W1:  "1wk",
+}
+
+
+def _resample_df_to_4h(df: pd.DataFrame) -> pd.DataFrame:
+    resampled = pd.DataFrame()
+    resampled['open'] = df['open'].resample('4h').first()
+    resampled['high'] = df['high'].resample('4h').max()
+    resampled['low'] = df['low'].resample('4h').min()
+    resampled['close'] = df['close'].resample('4h').last()
+    if 'volume' in df.columns:
+        resampled['volume'] = df['volume'].resample('4h').sum()
+    else:
+        resampled['volume'] = 0.0
+    return resampled.dropna()
+
+
+async def fill_data_gaps(
+    data_store: Any,
+    instrument: Instrument,
+    timeframe: Timeframe,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> None:
+    """Check data store for gaps and download missing candles from Yahoo Finance."""
+    now_dt = datetime.now(timezone.utc)
+    start_dt = start_dt.astimezone(timezone.utc)
+    end_dt = min(end_dt.astimezone(timezone.utc), now_dt)
+
+    first_ts, last_ts = data_store.list_ohlcv_range(instrument, timeframe)
+    
+    # Decide what range we need to download
+    download_start = start_dt
+    download_end = end_dt
+
+    if last_ts is not None:
+        last_ts = last_ts.astimezone(timezone.utc)
+        if last_ts < end_dt:
+            download_start = last_ts
+        else:
+            first_ts = first_ts.astimezone(timezone.utc)
+            if start_dt < first_ts:
+                download_start = start_dt
+                download_end = first_ts
+            else:
+                return
+
+    # Check yfinance limits for the timeframe
+    timeframe_limits_days = {
+        Timeframe.M1: 7,
+        Timeframe.M5: 59,
+        Timeframe.M15: 59,
+        Timeframe.M30: 59,
+        Timeframe.H1: 729,
+        Timeframe.H4: 729,
+    }
+    limit_days = timeframe_limits_days.get(timeframe)
+    if limit_days is not None:
+        earliest_allowed = now_dt - timedelta(days=limit_days)
+        if download_start < earliest_allowed:
+            download_start = earliest_allowed
+
+    if download_start >= download_end:
+        return
+
+    symbol = SYMBOL_MAP.get(instrument)
+    interval = TF_MAP.get(timeframe)
+    if not symbol or not interval:
+        logger.warning(f"No yfinance mapping for {instrument} or {timeframe}")
+        return
+
+    logger.info(f"Downloading gap data for {instrument.value} ({symbol}) [{download_start} -> {download_end}] interval={interval}")
+
+    try:
+        import yfinance as yf
+        loop = asyncio.get_event_loop()
+        df = await loop.run_in_executor(
+            None,
+            lambda: yf.download(
+                symbol,
+                start=download_start,
+                end=download_end,
+                interval=interval,
+                progress=False,
+            )
+        )
+
+        if df.empty:
+            logger.info(f"No data returned from yfinance for {symbol} interval={interval} in range [{download_start} -> {download_end}]")
+            return
+
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [str(col).lower() for col in df.columns]
+
+        required_cols = {"open", "high", "low", "close"}
+        if not required_cols.issubset(set(df.columns)):
+            logger.error(f"yfinance missing required columns for {symbol}. Got: {list(df.columns)}")
+            return
+
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        else:
+            df.index = df.index.tz_convert("UTC")
+
+        if timeframe == Timeframe.H4 and interval == "1h":
+            df = _resample_df_to_4h(df)
+
+        if "volume" not in df.columns:
+            df["volume"] = 0.0
+        else:
+            df["volume"] = df["volume"].astype(float).fillna(0.0)
+
+        data_store.write_ohlcv(instrument, timeframe, df)
+        logger.info(f"Successfully backfilled {len(df)} candles for {instrument.value} ({timeframe.value})")
+
+    except Exception as exc:
+        logger.exception(f"Failed to fetch/save gap data for {instrument.value} ({timeframe.value}): {exc}")
 
 
 def parse_datetime(dt_str: str) -> datetime:
@@ -50,6 +186,17 @@ async def get_ohlcv(
 
     start_dt = parse_datetime(start)
     end_dt = parse_datetime(end)
+
+    # Fill gaps dynamically using yfinance
+    try:
+        await fill_data_gaps(data_store, inst, tf, start_dt, end_dt)
+    except Exception as exc:
+        logger.exception(f"Failed during fill_data_gaps check: {exc}")
+
+    # Register the pair with the DataScheduler for live streaming
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        scheduler.add_active_pair(inst, tf)
 
     try:
         df = data_store.get_ohlcv(inst, tf, start_dt, end_dt)

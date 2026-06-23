@@ -27,10 +27,10 @@ def mocked_load_config(*args, **kwargs):
 
 src.core.config.load_config = mocked_load_config
 
-from unittest.mock import AsyncMock, MagicMock
-
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
+import pandas as pd
 
 from src.api.main import app
 from src.api.ws.manager import ws_manager
@@ -87,12 +87,40 @@ def test_signals_endpoints(client):
 
 def test_historical_ohlcv_empty(client):
     """Test GET /api/data/ohlcv returns empty list when no data is loaded."""
-    response = client.get(
-        "/api/data/ohlcv?instrument=EURUSD&timeframe=1h&start=2026-06-01T00:00:00Z&end=2026-06-02T00:00:00Z"
-    )
-    assert response.status_code in (200, 500)
-    if response.status_code == 200:
-        assert response.json() == []
+    with patch("yfinance.download") as mock_download:
+        mock_download.return_value = pd.DataFrame()
+        response = client.get(
+            "/api/data/ohlcv?instrument=EURUSD&timeframe=1h&start=2026-06-01T00:00:00Z&end=2026-06-02T00:00:00Z"
+        )
+        assert response.status_code in (200, 500)
+        if response.status_code == 200:
+            assert response.json() == []
+
+
+def test_historical_ohlcv_gap_filling(client):
+    """Test that get_ohlcv triggers gap filling logic using yfinance."""
+    with patch("yfinance.download") as mock_download:
+        idx = pd.date_range("2026-06-01T00:00:00Z", "2026-06-01T05:00:00Z", freq="1h", tz="UTC")
+        df = pd.DataFrame(
+            {
+                "open": [1.1, 1.11, 1.12, 1.13, 1.14, 1.15],
+                "high": [1.12, 1.13, 1.14, 1.15, 1.16, 1.17],
+                "low": [1.09, 1.1, 1.11, 1.12, 1.13, 1.14],
+                "close": [1.11, 1.12, 1.13, 1.14, 1.15, 1.16],
+                "volume": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+            },
+            index=idx
+        )
+        mock_download.return_value = df
+
+        response = client.get(
+            "/api/data/ohlcv?instrument=EURUSD&timeframe=1h&start=2026-06-01T00:00:00Z&end=2026-06-01T05:00:00Z"
+        )
+        assert response.status_code == 200
+        candles = response.json()
+        assert len(candles) > 0
+        assert candles[0]["open"] == 1.1
+        assert candles[-1]["close"] == 1.16
 
 
 @pytest.mark.asyncio

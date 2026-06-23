@@ -267,3 +267,31 @@ class TestControl:
             fetcher=mock_fetcher, active_pairs=pairs,
         )
         assert scheduler.active_pairs == pairs
+
+    def test_add_active_pair(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        scheduler = DataScheduler(
+            bus=mock_bus, store=mock_store, clock=LiveClock(),
+            fetcher=mock_fetcher, active_pairs=[],
+        )
+        assert len(scheduler.active_pairs) == 0
+        scheduler.add_active_pair(EURUSD, H1)
+        assert scheduler.active_pairs == [(EURUSD, H1)]
+        # Duplicate check
+        scheduler.add_active_pair(EURUSD, H1)
+        assert scheduler.active_pairs == [(EURUSD, H1)]
+
+    async def test_empty_loop_safety(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        scheduler = DataScheduler(
+            bus=mock_bus, store=mock_store, clock=LiveClock(),
+            fetcher=mock_fetcher, active_pairs=[],
+        )
+        import asyncio
+        task = asyncio.create_task(scheduler.run())
+        await asyncio.sleep(0.1)
+        scheduler.stop()
+        await task
+        assert scheduler._running is False
