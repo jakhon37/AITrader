@@ -1,4 +1,4 @@
-"""D08-BACKTEST — Backward-compatible wrapper for ReplayReporter."""
+"""D08-BACKTEST — Report Generator sub-package."""
 
 from src.backtest.reporter._base import ReplayReporter
 

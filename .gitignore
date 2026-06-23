@@ -38,7 +38,7 @@ ENV/
 *.swo
 
 # Data and checkpoints (large; use DVC or external store)
-data/
+/data/
 checkpoints/
 *.csv
 *.parquet
