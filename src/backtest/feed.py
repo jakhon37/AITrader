@@ -54,6 +54,9 @@ class LazyOHLCVBarList:
     def __bool__(self) -> bool:
         return len(self._raw_bars) > 0
 
+    def extend(self, other: LazyOHLCVBarList) -> None:
+        self._raw_bars.extend(other._raw_bars)
+
 
 class DataFeed:
     """Streams historical bars chronologically across multiple timeframes."""

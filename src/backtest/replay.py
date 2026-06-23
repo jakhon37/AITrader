@@ -38,6 +38,22 @@ from src.backtest.websocket import ReplayWebSocketEmitter
 logger = logging.getLogger(__name__)
 
 
+def get_buffer_duration(timeframe: Timeframe) -> timedelta:
+    from src.core.contracts import Timeframe
+    if timeframe == Timeframe.M1:
+        return timedelta(days=3)
+    elif timeframe == Timeframe.M5:
+        return timedelta(days=15)
+    elif timeframe == Timeframe.M15:
+        return timedelta(days=45)
+    elif timeframe == Timeframe.M30:
+        return timedelta(days=90)
+    elif timeframe == Timeframe.H1:
+        return timedelta(days=180)
+    else:
+        return timedelta(days=365 * 5)
+
+
 class StrategyReplaySession:
     """Watch mode: model trades, user observes signals at human speed."""
 
@@ -129,6 +145,34 @@ class StrategyReplaySession:
                 pass
         self.state.update(status="ended")
 
+    async def _load_next_bars_chunk(self) -> None:
+        """Fetch the next chunk of bars from the database and extend the active list."""
+        if not self._bars:
+            return
+            
+        last_close_time, _ = self._bars[len(self._bars) - 1]
+        start_time = last_close_time + timedelta(seconds=1)
+        if start_time >= self.end_date:
+            return
+            
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        end_time = min(self.end_date, start_time + buffer_dur)
+        
+        def load_chunk():
+            feed = DataFeed(
+                store=self.store,
+                instrument=self.instrument,
+                timeframes=[self.timeframe_enum],
+                start=start_time,
+                end=end_time,
+                clock=self.clock,
+            )
+            return feed._load_all_bars()
+            
+        next_bars = await asyncio.to_thread(load_chunk)
+        if next_bars:
+            self._bars.extend(next_bars)
+
     async def update_timeframe(self, timeframe: str) -> None:
         """Switch session timeframe dynamically."""
         from src.core.contracts import Timeframe
@@ -139,18 +183,38 @@ class StrategyReplaySession:
         self.timeframe_enum = new_tf_enum
         self.state.update(timeframe=timeframe)
         
-        # Reload bars from the current clock time to the end date
+        # Reload bars from the current clock time using a sliding buffer window
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        current_time = self.clock.now()
+        initial_end = min(self.end_date, current_time + buffer_dur)
+
         feed = DataFeed(
             store=self.store,
             instrument=self.instrument,
             timeframes=[self.timeframe_enum],
-            start=self.clock.now(),
-            end=self.end_date,
+            start=current_time,
+            end=initial_end,
             clock=self.clock,
         )
         self._bars = feed._load_all_bars()
         self._current_idx = 0
         self.state.update(total_bars=len(self._bars), current_bar_index=0)
+
+        # Recalculate total bars count in a background thread to prevent blocking
+        async def fetch_total_bars():
+            try:
+                df = await asyncio.to_thread(
+                    self.store.get_ohlcv,
+                    self.instrument,
+                    self.timeframe_enum,
+                    current_time,
+                    self.end_date
+                )
+                self.state.update(total_bars=len(df))
+            except Exception as e:
+                logger.warning(f"Failed to fetch total bars: {e}")
+
+        asyncio.create_task(fetch_total_bars())
 
     async def _replay_loop(self) -> None:
         """Main simulation execution loop."""
@@ -182,19 +246,40 @@ class StrategyReplaySession:
         await decision_engine.start()
         await exec_engine.start()
 
+        # Let's get the buffer duration
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        initial_end = min(self.end_date, self.start_date + buffer_dur)
+
         # Instantiate feed
         feed = DataFeed(
             store=self.store,
             instrument=self.instrument,
             timeframes=[self.timeframe_enum],
             start=self.start_date,
-            end=self.end_date,
+            end=initial_end,
             clock=self.clock,
         )
         
         self._bars = feed._load_all_bars()
         self.state.update(total_bars=len(self._bars))
         self._current_idx = 0
+
+        # Calculate total bars count in a background thread to prevent blocking
+        async def fetch_total_bars():
+            try:
+                df = await asyncio.to_thread(
+                    self.store.get_ohlcv,
+                    self.instrument,
+                    self.timeframe_enum,
+                    self.start_date,
+                    self.end_date
+                )
+                self.state.update(total_bars=len(df))
+            except Exception as e:
+                logger.warning(f"Failed to fetch total bars: {e}")
+                self.state.update(total_bars=len(self._bars))
+
+        asyncio.create_task(fetch_total_bars())
         
         try:
             while self._current_idx < len(self._bars):
@@ -242,6 +327,10 @@ class StrategyReplaySession:
                 
                 self._current_idx += 1
                 
+                # Load next chunk if near the end of the current buffer
+                if self._current_idx >= len(self._bars) - 50:
+                    await self._load_next_bars_chunk()
+
                 self.state.update(
                     current_time=close_time,
                     current_bar_index=self._current_idx,
@@ -339,17 +428,37 @@ class ManualReplaySession:
         await self.tech_engine.start()
         await self.exec_engine.start()
         
+        # Let's get the buffer duration
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        initial_end = min(self.end_date, self.start_date + buffer_dur)
+
         feed = DataFeed(
             store=self.store,
             instrument=self.instrument,
             timeframes=[self.timeframe_enum],
             start=self.start_date,
-            end=self.end_date,
+            end=initial_end,
             clock=self.clock,
         )
         self._bars = feed._load_all_bars()
         self._current_idx = 0
         self.state.update(status="running", total_bars=len(self._bars))
+        
+        # Calculate total bars count in a background thread to prevent blocking
+        async def fetch_total_bars():
+            try:
+                df = await asyncio.to_thread(
+                    self.store.get_ohlcv,
+                    self.instrument,
+                    self.timeframe_enum,
+                    self.start_date,
+                    self.end_date
+                )
+                self.state.update(total_bars=len(df))
+            except Exception as e:
+                logger.warning(f"Failed to fetch total bars: {e}")
+
+        asyncio.create_task(fetch_total_bars())
         
         # Load the very first bar to kick off
         if self._bars:
@@ -372,6 +481,10 @@ class ManualReplaySession:
         
         self._current_idx += 1
         
+        # Load next chunk if near the end of the current buffer
+        if self._current_idx >= len(self._bars) - 50:
+            await self._load_next_bars_chunk()
+
         # Update state
         self._update_session_state(close_time)
         
@@ -609,6 +722,34 @@ class ManualReplaySession:
         
         return scorecard
 
+    async def _load_next_bars_chunk(self) -> None:
+        """Fetch the next chunk of bars from the database and extend the active list."""
+        if not self._bars:
+            return
+            
+        last_close_time, _ = self._bars[len(self._bars) - 1]
+        start_time = last_close_time + timedelta(seconds=1)
+        if start_time >= self.end_date:
+            return
+            
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        end_time = min(self.end_date, start_time + buffer_dur)
+        
+        def load_chunk():
+            feed = DataFeed(
+                store=self.store,
+                instrument=self.instrument,
+                timeframes=[self.timeframe_enum],
+                start=start_time,
+                end=end_time,
+                clock=self.clock,
+            )
+            return feed._load_all_bars()
+            
+        next_bars = await asyncio.to_thread(load_chunk)
+        if next_bars:
+            self._bars.extend(next_bars)
+
     async def update_timeframe(self, timeframe: str) -> None:
         """Switch session timeframe dynamically."""
         from src.core.contracts import Timeframe
@@ -619,18 +760,38 @@ class ManualReplaySession:
         self.timeframe_enum = new_tf_enum
         self.state.update(timeframe=timeframe)
         
-        # Reload bars from the current clock time to the end date
+        # Reload bars from the current clock time using a sliding buffer window
+        buffer_dur = get_buffer_duration(self.timeframe_enum)
+        current_time = self.clock.now()
+        initial_end = min(self.end_date, current_time + buffer_dur)
+
         feed = DataFeed(
             store=self.store,
             instrument=self.instrument,
             timeframes=[self.timeframe_enum],
-            start=self.clock.now(),
-            end=self.end_date,
+            start=current_time,
+            end=initial_end,
             clock=self.clock,
         )
         self._bars = feed._load_all_bars()
         self._current_idx = 0
         self.state.update(total_bars=len(self._bars), current_bar_index=0)
+
+        # Recalculate total bars count in a background thread to prevent blocking
+        async def fetch_total_bars():
+            try:
+                df = await asyncio.to_thread(
+                    self.store.get_ohlcv,
+                    self.instrument,
+                    self.timeframe_enum,
+                    current_time,
+                    self.end_date
+                )
+                self.state.update(total_bars=len(df))
+            except Exception as e:
+                logger.warning(f"Failed to fetch total bars: {e}")
+
+        asyncio.create_task(fetch_total_bars())
 
     def _update_session_state(self, current_time: datetime) -> None:
         """Update shared state container helper."""
