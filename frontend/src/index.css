@@ -155,3 +155,100 @@ body {
 .animate-fade-in {
   animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Custom Drawing Tool Styling */
+.drawing-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.drawing-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+  transition: transform 0.1s ease;
+}
+
+.drawing-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.color-dot:hover {
+  transform: scale(1.15);
+}
+
+.color-dot.active {
+  border-color: #fff;
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* Draggable Resize Handles */
+.resize-handle-h {
+  width: 6px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 100;
+  align-self: stretch;
+  background: transparent;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.resize-handle-h::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 2px; right: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 1px;
+  transition: background 0.15s ease;
+}
+.resize-handle-h:hover::after {
+  background: var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+}
+
+.resize-handle-v {
+  height: 6px;
+  cursor: row-resize;
+  position: relative;
+  z-index: 100;
+  width: 100%;
+  background: transparent;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.resize-handle-v::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: 2px; bottom: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 1px;
+  transition: background 0.15s ease;
+}
+.resize-handle-v:hover::after {
+  background: var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+}
+

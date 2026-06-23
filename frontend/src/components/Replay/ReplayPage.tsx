@@ -19,7 +19,11 @@ import { OrderTicket } from './components/OrderTicket';
 import { PortfolioState } from './components/PortfolioState';
 import { SessionTradeLog } from './components/SessionTradeLog';
 
-export function ReplayPage() {
+interface ReplayPageProps {
+  sidebarHidden: boolean;
+}
+
+export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   // Session Configuration State
   const [instrument, setInstrument] = useState('EURUSD');
   const [timeframe, setTimeframe] = useState('1h');
@@ -43,6 +47,105 @@ export function ReplayPage() {
 
   // Auto Scroll Refs
   const tradeLogEndRef = useRef<HTMLDivElement>(null);
+
+  // Resize and Toggle panel states
+  const [rightHidden, setRightHidden] = useState(() => {
+    return localStorage.getItem('replay_right_hidden') === 'true';
+  });
+  const [leftWidth, setLeftWidth] = useState(70);
+  const [ticketHeight, setTicketHeight] = useState(30);
+  const [portfolioHeight, setPortfolioHeight] = useState(35);
+  const [ticketCollapsed, setTicketCollapsed] = useState(() => {
+    return localStorage.getItem('replay_ticket_collapsed') === 'true';
+  });
+
+  const handleToggleTicketCollapsed = (collapsed: boolean) => {
+    setTicketCollapsed(collapsed);
+    localStorage.setItem('replay_ticket_collapsed', String(collapsed));
+  };
+
+  const handleToggleRightPanel = () => {
+    setRightHidden((prev) => {
+      const next = !prev;
+      localStorage.setItem('replay_right_hidden', String(next));
+      return next;
+    });
+  };
+
+  const handleLeftRightDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = leftWidth;
+    const container = e.currentTarget.parentElement;
+    if (!container) return;
+    const containerWidth = container.getBoundingClientRect().width;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPercent = (deltaX / containerWidth) * 100;
+      setLeftWidth(Math.max(20, Math.min(85, startWidth + deltaPercent)));
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleVerticalDrag1 = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startTicketHeight = ticketHeight;
+    const container = e.currentTarget.parentElement;
+    if (!container) return;
+    const containerHeight = container.getBoundingClientRect().height;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const deltaPercent = (deltaY / containerHeight) * 100;
+      const nextTicketHeight = Math.max(10, Math.min(50, startTicketHeight + deltaPercent));
+      if (nextTicketHeight + portfolioHeight <= 90) {
+        setTicketHeight(nextTicketHeight);
+      }
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleVerticalDrag2 = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startPortfolioHeight = portfolioHeight;
+    const container = e.currentTarget.parentElement;
+    if (!container) return;
+    const containerHeight = container.getBoundingClientRect().height;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const deltaPercent = (deltaY / containerHeight) * 100;
+      const nextPortfolioHeight = Math.max(10, Math.min(50, startPortfolioHeight + deltaPercent));
+      if (ticketHeight + nextPortfolioHeight <= 90) {
+        setPortfolioHeight(nextPortfolioHeight);
+      }
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
 
   // Check state on load
   useEffect(() => {
@@ -300,18 +403,30 @@ export function ReplayPage() {
         calculateIndicators={calculateIndicators}
         onIndicatorsChange={handleIndicatorsChange}
         handleStop={handleStop}
+        sidebarHidden={sidebarHidden}
+        rightPanelHidden={rightHidden}
+        onToggleRightPanel={handleToggleRightPanel}
       />
 
       <div style={{ 
-        display: 'grid', 
-        gridTemplateColumns: '3fr 1.25fr', 
-        gap: 12, 
+        display: 'flex', 
         padding: 12, 
         overflow: 'hidden', 
-        height: 'calc(100vh - 56px)' 
+        height: 'calc(100vh - 56px)',
+        boxSizing: 'border-box',
+        width: '100%',
+        gap: 0
       }}>
         {/* Left: Chart */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden' }}>
+        <div className="glass-panel" style={{
+          width: rightHidden ? '100%' : `${leftWidth}%`,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          padding: 12,
+          overflow: 'hidden',
+          boxSizing: 'border-box'
+        }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <span style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>{instrument}</span>
@@ -344,35 +459,64 @@ export function ReplayPage() {
           </div>
         </div>
 
+        {/* Divider left-right */}
+        {!rightHidden && (
+          <div className="resize-handle-h" onMouseDown={handleLeftRightDrag} />
+        )}
+
         {/* Right: Operations, Position, and Trade Log */}
-        <div style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12, overflow: 'hidden' }}>
-          {mode === 'manual' ? (
-            <OrderTicket
-              orderSize={orderSize}
-              setOrderSize={setOrderSize}
-              handleBuy={handleBuy}
-              handleSell={handleSell}
-              errorMsg={errorMsg}
-              successMsg={successMsg}
-            />
-          ) : (
-            <div className="glass-panel" style={{ padding: 14, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 12 }}>
-              Manual trades are disabled in Strategy Watch Mode.
+        {!rightHidden && (
+          <div style={{
+            flex: 1,
+            minWidth: 0,
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0,
+            overflow: 'hidden'
+          }}>
+            {/* Row 1: Order Ticket */}
+            <div style={{ height: ticketCollapsed ? 'auto' : `${ticketHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
+              <OrderTicket
+                orderSize={orderSize}
+                setOrderSize={setOrderSize}
+                handleBuy={handleBuy}
+                handleSell={handleSell}
+                errorMsg={errorMsg}
+                successMsg={successMsg}
+                isCollapsed={ticketCollapsed}
+                onToggleCollapse={() => handleToggleTicketCollapsed(!ticketCollapsed)}
+                mode={mode}
+              />
             </div>
-          )}
 
-          <PortfolioState
-            sessionState={sessionState}
-            formatCurrency={formatCurrency}
-            mode={mode}
-            handleClosePosition={handleClosePosition}
-          />
+            {/* Divider 1 */}
+            {!ticketCollapsed && (
+              <div className="resize-handle-v" onMouseDown={handleVerticalDrag1} />
+            )}
 
-          <SessionTradeLog
-            sessionState={sessionState}
-            tradeLogEndRef={tradeLogEndRef}
-          />
-        </div>
+            {/* Row 2: Portfolio State */}
+            <div style={{ height: `${portfolioHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
+              <PortfolioState
+                sessionState={sessionState}
+                formatCurrency={formatCurrency}
+                mode={mode}
+                handleClosePosition={handleClosePosition}
+              />
+            </div>
+
+            {/* Divider 2 */}
+            <div className="resize-handle-v" onMouseDown={handleVerticalDrag2} />
+
+            {/* Row 3: Session Trade Log */}
+            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <SessionTradeLog
+                sessionState={sessionState}
+                tradeLogEndRef={tradeLogEndRef}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

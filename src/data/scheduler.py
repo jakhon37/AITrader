@@ -265,6 +265,10 @@ class DataScheduler:
     async def _live_loop(self) -> None:
         """Inner loop: sleep to the next close, emit, repeat."""
         while self._running:
+            if not self._active_pairs:
+                await asyncio.sleep(1.0)
+                continue
+
             now = self._clock.now()
 
             # Find the next candle close across all active pairs
@@ -289,7 +293,15 @@ class DataScheduler:
                     now, timeframe  # use `now` before sleep so we target the same candle
                 )
                 if now_after_sleep >= close_time:
-                    await self._fetch_and_publish(instrument, timeframe)
+                    try:
+                        await self._fetch_and_publish(instrument, timeframe)
+                    except Exception as exc:
+                        _log.error(
+                            "scheduler_fetch_and_publish_failed",
+                            instrument=instrument.value,
+                            timeframe=timeframe.value,
+                            error=str(exc),
+                        )
 
     async def _fetch_and_publish(
         self,
@@ -434,6 +446,17 @@ class DataScheduler:
     def reset_last_emitted(self) -> None:
         """Clear emission tracking — used by D08 when starting a new replay session."""
         self._last_emitted.clear()
+
+    def add_active_pair(self, instrument: Instrument, timeframe: Timeframe) -> None:
+        """Dynamically add an instrument/timeframe pair to the scheduling loop."""
+        pair = (instrument, timeframe)
+        if pair not in self._active_pairs:
+            self._active_pairs.append(pair)
+            _log.info(
+                "scheduler_pair_added",
+                instrument=instrument.value,
+                timeframe=timeframe.value,
+            )
 
     @property
     def active_pairs(self) -> list[tuple[Instrument, Timeframe]]:

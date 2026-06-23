@@ -1,4 +1,4 @@
-import { RefObject } from 'react';
+import type { RefObject } from 'react';
 import { BarChart2 } from 'lucide-react';
 
 interface SessionTradeLogProps {

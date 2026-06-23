@@ -1,4 +1,4 @@
-import { Play, Pause, Square, Activity } from 'lucide-react';
+import { Play, Pause, Square, Activity, Layout } from 'lucide-react';
 
 interface ActiveSessionHeaderProps {
   instrument: string;
@@ -14,6 +14,9 @@ interface ActiveSessionHeaderProps {
   calculateIndicators: boolean;
   onIndicatorsChange: (checked: boolean) => void;
   handleStop: () => void;
+  sidebarHidden?: boolean;
+  rightPanelHidden?: boolean;
+  onToggleRightPanel?: () => void;
 }
 
 export function ActiveSessionHeader({
@@ -30,16 +33,22 @@ export function ActiveSessionHeader({
   calculateIndicators,
   onIndicatorsChange,
   handleStop,
+  sidebarHidden,
+  rightPanelHidden,
+  onToggleRightPanel,
 }: ActiveSessionHeaderProps) {
   return (
     <header style={{ 
       display: 'flex', 
       justifyContent: 'space-between', 
       alignItems: 'center', 
-      padding: '0 20px', 
+      padding: sidebarHidden ? '0 20px 0 64px' : '0 20px', 
       background: 'rgba(7, 9, 14, 0.8)', 
       borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-      zIndex: 10
+      zIndex: 10,
+      transition: 'padding-left 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+      height: 56,
+      boxSizing: 'border-box'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--neon-cyan)', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -133,6 +142,37 @@ export function ActiveSessionHeader({
           <Square size={12} fill="#ff5252" />
           End Session
         </button>
+
+        {onToggleRightPanel && (
+          <button
+            onClick={onToggleRightPanel}
+            title={rightPanelHidden ? "Show Right Dashboard" : "Hide Right Dashboard"}
+            style={{
+              background: rightPanelHidden ? 'rgba(0,229,255,0.1)' : 'transparent',
+              border: `1px solid ${rightPanelHidden ? 'var(--neon-cyan)' : 'rgba(255,255,255,0.15)'}`,
+              color: rightPanelHidden ? 'var(--neon-cyan)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              padding: '6px',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#fff';
+              e.currentTarget.style.borderColor = 'var(--neon-cyan)';
+              e.currentTarget.style.background = 'var(--neon-cyan-glow)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = rightPanelHidden ? 'var(--neon-cyan)' : 'var(--text-secondary)';
+              e.currentTarget.style.borderColor = rightPanelHidden ? 'var(--neon-cyan)' : 'rgba(255,255,255,0.15)';
+              e.currentTarget.style.background = rightPanelHidden ? 'rgba(0,229,255,0.1)' : 'transparent';
+            }}
+          >
+            <Layout size={16} />
+          </button>
+        )}
       </div>
     </header>
   );

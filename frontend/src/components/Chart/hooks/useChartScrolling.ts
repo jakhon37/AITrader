@@ -1,4 +1,5 @@
-import { useEffect, MutableRefObject } from 'react';
+import { useEffect } from 'react';
+import type { MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../../../api/client';
 import { MAX_BUFFER, PAGINATION_LOOKBACK, isTradingBar } from '../utils';
@@ -41,17 +42,22 @@ export function useChartScrolling({
         try {
           const oldestTime = dataRef.current[0].time;
           const oldestDate = new Date(oldestTime * 1000);
-          const daysToLoad = PAGINATION_LOOKBACK[timeframe] ?? 30;
-          const chunkStart = new Date(oldestDate.getTime() - daysToLoad * 86400_000).toISOString();
-          const chunkEnd = oldestDate.toISOString();
 
-          const newChunk = await getOHLCV(instrument, timeframe, chunkStart, chunkEnd);
-          if (!Array.isArray(newChunk) || newChunk.length === 0) {
-            pag.hasMoreHistory = false;
-            return;
-          }
+          const fetchOlder = async (lookbackDays: number, attempt: number): Promise<any[]> => {
+            const chunkStart = new Date(oldestDate.getTime() - lookbackDays * 86400_000).toISOString();
+            const chunkEnd = oldestDate.toISOString();
+            const chunk = await getOHLCV(instrument, timeframe, chunkStart, chunkEnd);
+            const filtered = Array.isArray(chunk) ? chunk.filter(isTradingBar).filter((d) => d.time < oldestTime) : [];
 
-          const filteredChunk = newChunk.filter(isTradingBar).filter((d) => d.time < oldestTime);
+            if (filtered.length === 0 && attempt < 3) {
+              // Expand window recursively (adding 5 days) to skip weekend/holiday gaps
+              return fetchOlder(lookbackDays + 5, attempt + 1);
+            }
+            return filtered;
+          };
+
+          const initialDays = PAGINATION_LOOKBACK[timeframe] ?? 30;
+          const filteredChunk = await fetchOlder(initialDays, 1);
           if (filteredChunk.length === 0) {
             pag.hasMoreHistory = false;
             return;

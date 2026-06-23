@@ -21,11 +21,12 @@ class ReplaySessionState:
         speed: float = 1.0,
         timeframe: str = "1h",
         calculate_indicators: bool = True,
+        current_time: Optional[datetime] = None,
     ) -> None:
         self._lock = threading.Lock()
         self._mode = mode
         self._status = "paused"  # "running" | "paused" | "ended"
-        self._current_time = datetime.min
+        self._current_time = current_time or datetime.min
         self._current_bar_index = 0
         self._total_bars = total_bars
         self._speed = speed

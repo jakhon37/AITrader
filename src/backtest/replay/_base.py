@@ -80,6 +80,7 @@ class BaseReplaySession:
             speed=speed,
             timeframe=timeframe,
             calculate_indicators=calculate_indicators,
+            current_time=start_date,
         )
         self.emitter = ReplayWebSocketEmitter()
         self.tech_engine = None  # set by subclass in start()

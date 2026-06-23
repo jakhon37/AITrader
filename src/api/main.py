@@ -44,10 +44,13 @@ from src.api.routes import config, data, health, portfolio, signals, replay
 from src.api.ws.handlers import setup_ws_bridge
 from src.api.ws.manager import ws_manager
 from src.core.bus import create_bus
+from src.core.clock import set_clock, LiveClock
 from src.core.config import load_config
 from src.core.logging import get_logger
+from src.data.scheduler import DataScheduler
 from src.data.store import DataStore
 from src.execution.engine import ExecutionEngine
+import asyncio
 
 _log = get_logger("D10-WEBUI")
 
@@ -75,6 +78,21 @@ async def lifespan(app: FastAPI):
     app.state.engine = engine
     engine.start()
 
+    # 5. Initialize Live Clock & DataScheduler
+    clock = LiveClock()
+    set_clock(clock)
+    scheduler = DataScheduler(
+        bus=bus,
+        store=data_store,
+        clock=clock,
+        active_pairs=[],
+    )
+    app.state.scheduler = scheduler
+
+    # 6. Start the DataScheduler background task
+    scheduler_task = asyncio.create_task(scheduler.run())
+    app.state.scheduler_task = scheduler_task
+
     # Initialize active replay session placeholder
     app.state.active_replay_session = None
 
@@ -83,6 +101,14 @@ async def lifespan(app: FastAPI):
 
     # Cleanup / Shutdown
     engine.stop()
+    scheduler.stop()
+    try:
+        await asyncio.wait_for(scheduler_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        _log.warning("scheduler_shutdown_timeout")
+        scheduler_task.cancel()
+    except Exception as e:
+        _log.exception("scheduler_shutdown_error", error=str(e))
     _log.info("webui_api_shutdown")
 
 

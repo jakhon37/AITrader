@@ -14,7 +14,7 @@ interface DataStreamHookOptions {
 
 // Global scroll cache to preserve zoom/pan position when changing timeframe/instrument
 const lastScrollCache = {
-  rightOffset: null as number | null,
+  centerTime: null as number | null,
   width: 150,
 };
 const prevTimeframeCache = { current: '' };
@@ -94,7 +94,7 @@ export function useChartDataStream(
     };
 
     if (prevInstrumentCache.current !== instrument) {
-      lastScrollCache.rightOffset = null;
+      lastScrollCache.centerTime = null;
       prevInstrumentCache.current = instrument;
     }
 
@@ -102,54 +102,84 @@ export function useChartDataStream(
     const end = virtualEndTimeRef.current || new Date().toISOString();
 
     if (!isTimeframeChange) {
-      lastScrollCache.rightOffset = null;
+      lastScrollCache.centerTime = null;
     }
 
     prevTimeframeCache.current = timeframe;
 
-    const days = LOOKBACK[timeframe] ?? 30;
-    const endDate = new Date(end);
-    const start = new Date(endDate.getTime() - days * 86400_000).toISOString();
+    const fetchWithLookback = (lookbackDays: number, attempt: number) => {
+      const endDate = new Date(end);
+      const start = new Date(endDate.getTime() - lookbackDays * 86400_000).toISOString();
 
-    getOHLCV(instrument, timeframe, start, end)
-      .then((data: any[]) => {
-        if (!Array.isArray(data) || data.length === 0) {
-          paginationRef.current.hasMoreHistory = false;
-          return;
-        }
+      getOHLCV(instrument, timeframe, start, end)
+        .then((data: any[]) => {
+          const filtered = Array.isArray(data) ? data.filter(isTradingBar) : [];
 
-        const filtered = data.filter(isTradingBar);
-        if (filtered.length > MAX_BUFFER) {
-          dataRef.current = filtered.slice(filtered.length - MAX_BUFFER);
-          paginationRef.current.hasMoreHistory = true;
-        } else {
-          dataRef.current = filtered;
-        }
+          if (filtered.length < 100 && attempt < 3) {
+            // No or too few data in this window (e.g. start date is weekend/holiday).
+            // Try again recursively with a larger lookback window (adding 5 days).
+            fetchWithLookback(lookbackDays + 5, attempt + 1);
+            return;
+          }
 
-        candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
-        volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
+          if (filtered.length === 0) {
+            paginationRef.current.hasMoreHistory = false;
+            return;
+          }
 
-        if (isTimeframeChange && lastScrollCache.rightOffset !== null) {
-          const newLastIndex = dataRef.current.length - 1;
-          const newTo = newLastIndex + lastScrollCache.rightOffset;
-          const newFrom = newTo - lastScrollCache.width;
-          chart.timeScale().setVisibleLogicalRange({
-            from: newFrom,
-            to: newTo,
-          });
-        } else {
-          chart.timeScale().fitContent();
-        }
-      })
-      .catch(console.error);
+          if (filtered.length > MAX_BUFFER) {
+            dataRef.current = filtered.slice(filtered.length - MAX_BUFFER);
+            paginationRef.current.hasMoreHistory = true;
+          } else {
+            dataRef.current = filtered;
+          }
+
+          candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
+          volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
+
+          if (isTimeframeChange && lastScrollCache.centerTime) {
+            const centerTime = lastScrollCache.centerTime;
+            const centerIndex = findClosestIndex(dataRef.current, centerTime);
+
+            if (centerIndex !== -1) {
+              const halfWidth = lastScrollCache.width / 2;
+              const newFrom = centerIndex - halfWidth;
+              const newTo = centerIndex + halfWidth;
+              chart.timeScale().setVisibleLogicalRange({
+                from: newFrom,
+                to: newTo,
+              });
+            } else {
+              chart.timeScale().fitContent();
+            }
+            lastScrollCache.centerTime = null;
+          } else {
+            chart.timeScale().fitContent();
+          }
+        })
+        .catch(console.error);
+    };
+
+    const initialDays = LOOKBACK[timeframe] ?? 30;
+    let lookbackDays = initialDays;
+
+    if (isTimeframeChange && lastScrollCache.centerTime) {
+      const centerDateTime = new Date(lastScrollCache.centerTime * 1000);
+      const timeDiffMs = new Date(end).getTime() - centerDateTime.getTime();
+      if (timeDiffMs > 0) {
+        lookbackDays = Math.max(initialDays, (timeDiffMs / 86400_000) + initialDays);
+      }
+    }
+
+    fetchWithLookback(lookbackDays, 1);
 
     return () => {
       try {
         const logicalRange = chart.timeScale().getVisibleLogicalRange();
-        if (logicalRange) {
+        if (logicalRange && dataRef.current.length > 0) {
           const width = logicalRange.to - logicalRange.from;
-          const lastIndex = dataRef.current.length - 1;
-          lastScrollCache.rightOffset = logicalRange.to - lastIndex;
+          const centerIndex = Math.max(0, Math.min(dataRef.current.length - 1, Math.round((logicalRange.from + logicalRange.to) / 2)));
+          lastScrollCache.centerTime = dataRef.current[centerIndex]?.time;
           lastScrollCache.width = width;
         }
       } catch (e) {
