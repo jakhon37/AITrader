@@ -56,6 +56,7 @@ class TechnicalDataLoader:
 
     def __init__(self, store: DataStore) -> None:
         self.store = store
+        self._cache: dict[tuple[Instrument, Timeframe], pd.DataFrame] = {}
 
     def load(
         self,
@@ -70,18 +71,26 @@ class TechnicalDataLoader:
         """
         tf_data = {}
         for tf in timeframes:
+            cache_key = (instrument, tf)
+            if cache_key not in self._cache:
+                # Cache a broad range of data around current_time to avoid repeated disk reads.
+                # Backtests/replays typically span up to a few years, so we cache 1 year back and forward.
+                start_query = current_time - timedelta(days=366)
+                end_query = current_time + timedelta(days=366)
+                try:
+                    df_full = self.store.get_ohlcv(instrument, tf, start_query, end_query)
+                    if df_full.index.tz is None:
+                        df_full.index = df_full.index.tz_localize("UTC")
+                    self._cache[cache_key] = df_full
+                except Exception:
+                    self._cache[cache_key] = pd.DataFrame()
+
+            df_cached = self._cache[cache_key]
             start_time = estimate_start_time(current_time, tf, num_bars)
             
-            try:
-                df = self.store.get_ohlcv(instrument, tf, start_time, current_time)
-            except Exception:
-                # Fallback to empty DataFrame if store has no data for this range
-                df = pd.DataFrame()
-                
-            if not df.empty:
-                # Ensure the DatetimeIndex has timezone UTC
-                if df.index.tz is None:
-                    df.index = df.index.tz_localize("UTC")
+            if not df_cached.empty:
+                # Slice in-memory
+                df = df_cached.loc[start_time:current_time]
                 
                 # Exclude the bar if its end time (open time + duration) is after current_time
                 delta = timeframe_to_timedelta(tf)
@@ -89,7 +98,9 @@ class TechnicalDataLoader:
                 
                 # Keep only the last num_bars
                 df = df.tail(num_bars)
-            
+            else:
+                df = pd.DataFrame()
+                
             tf_data[tf] = df
             
         return MultiTFDataset(instrument=instrument, timeframes=tf_data)

@@ -83,6 +83,14 @@ class StrategyReplaySession:
         from src.core.contracts import Timeframe
         self.timeframe_enum = Timeframe(timeframe)
         
+        from src.core.config import load_instruments
+        self.inst_configs = load_instruments()
+        if self.instrument in self.inst_configs:
+            self.inst_configs[self.instrument].primary_timeframe = self.timeframe_enum
+            # Ensure it is also in active_timeframes so the loader fetches it
+            if self.timeframe_enum not in self.inst_configs[self.instrument].active_timeframes:
+                self.inst_configs[self.instrument].active_timeframes.append(self.timeframe_enum)
+        
         # Session state
         self.state = ReplaySessionState(
             mode="watch",
@@ -183,6 +191,11 @@ class StrategyReplaySession:
         self.timeframe_enum = new_tf_enum
         self.state.update(timeframe=timeframe)
         
+        if self.instrument in self.inst_configs:
+            self.inst_configs[self.instrument].primary_timeframe = self.timeframe_enum
+            if self.timeframe_enum not in self.inst_configs[self.instrument].active_timeframes:
+                self.inst_configs[self.instrument].active_timeframes.append(self.timeframe_enum)
+        
         # Reload bars from the current clock time using a sliding buffer window
         buffer_dur = get_buffer_duration(self.timeframe_enum)
         current_time = self.clock.now()
@@ -218,15 +231,11 @@ class StrategyReplaySession:
 
     async def _replay_loop(self) -> None:
         """Main simulation execution loop."""
-        # Load configs
-        from src.core.config import load_instruments
-        inst_configs = load_instruments()
-        
         # Setup engines
         tech_engine = TechnicalEngine(
             bus=self.bus,
             store=self.store,
-            instruments_config=inst_configs,
+            instruments_config=self.inst_configs,
         )
         decision_engine = MockDecisionEngine(self.bus)
         exec_engine = MockExecutionEngine(self.bus, initial_capital=self.initial_capital)
@@ -388,6 +397,14 @@ class ManualReplaySession:
         from src.core.contracts import Timeframe
         self.timeframe_enum = Timeframe(timeframe)
         
+        from src.core.config import load_instruments
+        self.inst_configs = load_instruments()
+        if self.instrument in self.inst_configs:
+            self.inst_configs[self.instrument].primary_timeframe = self.timeframe_enum
+            # Ensure it is also in active_timeframes so the loader fetches it
+            if self.timeframe_enum not in self.inst_configs[self.instrument].active_timeframes:
+                self.inst_configs[self.instrument].active_timeframes.append(self.timeframe_enum)
+        
         self.state = ReplaySessionState(
             mode="manual",
             instrument=instrument,
@@ -409,13 +426,10 @@ class ManualReplaySession:
 
     async def start(self) -> None:
         """Start manual training session."""
-        from src.core.config import load_instruments
-        inst_configs = load_instruments()
-        
         self.tech_engine = TechnicalEngine(
             bus=self.bus,
             store=self.store,
-            instruments_config=inst_configs,
+            instruments_config=self.inst_configs,
         )
         # Decision engine is omitted in manual mode
         self.exec_engine = MockExecutionEngine(self.bus, initial_capital=self.initial_capital)
@@ -759,6 +773,11 @@ class ManualReplaySession:
             
         self.timeframe_enum = new_tf_enum
         self.state.update(timeframe=timeframe)
+        
+        if self.instrument in self.inst_configs:
+            self.inst_configs[self.instrument].primary_timeframe = self.timeframe_enum
+            if self.timeframe_enum not in self.inst_configs[self.instrument].active_timeframes:
+                self.inst_configs[self.instrument].active_timeframes.append(self.timeframe_enum)
         
         # Reload bars from the current clock time using a sliding buffer window
         buffer_dur = get_buffer_duration(self.timeframe_enum)
