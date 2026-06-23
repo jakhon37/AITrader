@@ -9,12 +9,14 @@ interface SignalsStore {
   fundamentalSignals: FundamentalSignal[];
   technicalSignal: TechnicalSignal | null;
   healthStatus: HealthStatus;
+  wsConnected: boolean;
   addTradeSignal: (s: TradeSignal) => void;
   addFundamentalSignal: (s: FundamentalSignal) => void;
   setTechnicalSignal: (s: TechnicalSignal) => void;
   setHealthDiv: (div: HealthDiv) => void;
   initTradeSignals: (signals: TradeSignal[]) => void;
   initFundamentalSignals: (signals: FundamentalSignal[]) => void;
+  setWsConnected: (connected: boolean) => void;
 }
 
 export const useSignalsStore = create<SignalsStore>((set) => ({
@@ -22,6 +24,7 @@ export const useSignalsStore = create<SignalsStore>((set) => ({
   fundamentalSignals: [],
   technicalSignal: null,
   healthStatus: { status: 'ok', divisions: {} },
+  wsConnected: false,
   addTradeSignal: (s) => set((state) => ({ tradeSignals: [s, ...state.tradeSignals.slice(0, 49)] })),
   addFundamentalSignal: (s) => set((state) => ({ fundamentalSignals: [s, ...state.fundamentalSignals.slice(0, 49)] })),
   setTechnicalSignal: (s) => set({ technicalSignal: s }),
@@ -36,4 +39,5 @@ export const useSignalsStore = create<SignalsStore>((set) => ({
   }),
   initTradeSignals: (signals) => set({ tradeSignals: signals.slice(0, 50) }),
   initFundamentalSignals: (signals) => set({ fundamentalSignals: signals.slice(0, 50) }),
+  setWsConnected: (connected) => set({ wsConnected: connected }),
 }));

@@ -13,7 +13,7 @@ export function useWebSocket() {
   const reconnectDelay = useRef(RECONNECT_INITIAL_MS);
   const isMounted = useRef(true);
 
-  const { addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv } = useSignalsStore();
+  const { addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setWsConnected } = useSignalsStore();
   const { setPortfolio } = usePortfolioStore();
 
   useEffect(() => {
@@ -27,6 +27,7 @@ export function useWebSocket() {
       ws.onopen = () => {
         if (!isMounted.current) return;
         setConnected(true);
+        setWsConnected(true);
         reconnectDelay.current = RECONNECT_INITIAL_MS;
       };
 
@@ -91,6 +92,7 @@ export function useWebSocket() {
       ws.onclose = () => {
         if (!isMounted.current) return;
         setConnected(false);
+        setWsConnected(false);
         const delay = reconnectDelay.current;
         reconnectDelay.current = Math.min(delay * 2, RECONNECT_MAX_MS);
         setTimeout(connect, delay);

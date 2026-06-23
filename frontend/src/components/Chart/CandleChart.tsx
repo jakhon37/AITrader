@@ -11,7 +11,7 @@ interface Props {
 }
 
 const LOOKBACK: Record<string, number> = {
-  '1m': 30, '5m': 90, '15m': 180, '30m': 365, '1h': 1500, '4h': 3650, '1d': 3650, '1w': 3650,
+  '1m': 2, '5m': 5, '15m': 10, '30m': 20, '1h': 40, '4h': 180, '1d': 1000, '1w': 7000,
 };
 
 const MAX_BUFFER = 20000;
@@ -71,40 +71,11 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
   const lastVisibleBarsCountRef = useRef<number>(150);
   const prevTimeframeRef = useRef<string>(timeframe);
   const prevInstrumentRef = useRef<string>(instrument);
-  const lastLoadedEndTimeRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Check if this is just a sequential tick during replay or streaming
-    let isReplayTick = false;
-    if (
-      chartRef.current &&
-      prevInstrumentRef.current === instrument &&
-      prevTimeframeRef.current === timeframe &&
-      lastLoadedEndTimeRef.current &&
-      virtualEndTime
-    ) {
-      const prevMs = Date.parse(lastLoadedEndTimeRef.current);
-      const newMs = Date.parse(virtualEndTime);
-      if (!isNaN(prevMs) && !isNaN(newMs)) {
-        const diffMs = newMs - prevMs;
-        // Treat as a replay tick if the time difference is small (e.g., within 1 day)
-        if (diffMs >= 0 && diffMs < 86400_000) {
-          isReplayTick = true;
-        }
-      }
-    }
-
-    lastLoadedEndTimeRef.current = virtualEndTime;
-
-    if (isReplayTick) {
-      prevInstrumentRef.current = instrument;
-      prevTimeframeRef.current = timeframe;
-      return;
-    }
-
-    // Tear down previous chart since it's a real change (instrument, timeframe, or large jump)
+    // Tear down previous chart since it's a real change (instrument or timeframe)
     if (chartRef.current) {
       try { chartRef.current.remove(); } catch { /* ignore */ }
       chartRef.current = null;
@@ -470,7 +441,8 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
       candleRef.current = null;
       volumeRef.current = null;
     };
-  }, [instrument, timeframe, onNewBar, virtualEndTime]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrument, timeframe, onNewBar]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }

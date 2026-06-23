@@ -7,13 +7,13 @@ import { NewsFeed } from '../Panels/NewsFeed';
 import { Portfolio } from '../Panels/Portfolio';
 import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
-import { useWebSocket } from '../../hooks/useWebSocket';
 import { usePortfolio } from '../../hooks/usePortfolio';
+import { useSignalsStore } from '../../store/signals';
 
 export function TradingTerminal() {
   const [instrument, setInstrument] = useState('EURUSD');
   const [timeframe, setTimeframe] = useState('1h');
-  const { connected } = useWebSocket();
+  const connected = useSignalsStore((state) => state.wsConnected);
   usePortfolio();
 
   return (

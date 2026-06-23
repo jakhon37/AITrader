@@ -16,12 +16,12 @@ import {
   startReplay, 
   pauseReplay, 
   resumeReplay, 
-  stepReplay, 
   placeManualOrder, 
   closeManualPosition, 
   stopReplay, 
   getReplayState,
-  changeReplayTimeframe
+  changeReplayTimeframe,
+  changeReplaySpeed
 } from '../../api/client';
 import { CandleChart } from '../Chart/CandleChart';
 
@@ -30,7 +30,6 @@ export function ReplayPage() {
   const [instrument, setInstrument] = useState('EURUSD');
   const [timeframe, setTimeframe] = useState('1h');
   const [startDate, setStartDate] = useState('2024-01-01');
-  const [endDate, setEndDate] = useState('2024-01-08');
   const [initialCapital, setInitialCapital] = useState(10000);
   const [mode, setMode] = useState<'watch' | 'manual'>('manual');
   const [speed, setSpeed] = useState(10);
@@ -105,7 +104,6 @@ export function ReplayPage() {
       const payload = {
         instrument,
         start_date: `${startDate}T00:00:00Z`,
-        end_date: `${endDate}T00:00:00Z`,
         initial_capital: initialCapital,
         mode,
         speed: mode === 'watch' ? speed : 0.0,
@@ -149,13 +147,6 @@ export function ReplayPage() {
     }
   };
 
-  const handleStep = async () => {
-    try {
-      await stepReplay();
-    } catch (err) {
-      console.error('Step failed:', err);
-    }
-  };
 
   const handleStop = async () => {
     try {
@@ -299,15 +290,22 @@ export function ReplayPage() {
               />
             </div>
 
-            {/* End Date */}
+            {/* Timeframe */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>END DATE</label>
-              <input 
-                type="date" 
-                value={endDate} 
-                onChange={(e) => setEndDate(e.target.value)}
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>TIMEFRAME</label>
+              <select 
+                value={timeframe} 
+                onChange={(e) => setTimeframe(e.target.value)}
                 style={{ background: '#111827', border: '1px solid var(--border-glow)', padding: 10, borderRadius: 6, color: '#fff', fontSize: 14 }}
-              />
+              >
+                <option value="1m">1m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1h">1h</option>
+                <option value="4h">4h</option>
+                <option value="1d">1d</option>
+              </select>
             </div>
           </div>
 
@@ -566,37 +564,66 @@ export function ReplayPage() {
 
         {/* Buttons Control Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {mode === 'watch' ? (
-            <>
-              {status === 'running' ? (
-                <button 
-                  onClick={handlePause}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#1e2937', border: '1px solid var(--border-glow)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#fff', fontSize: 13 }}
-                >
-                  <Pause size={14} />
-                  Pause
-                </button>
-              ) : (
-                <button 
-                  onClick={handleResume}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--neon-cyan-glow)', border: '1px solid var(--neon-cyan)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#fff', fontSize: 13 }}
-                >
-                  <Play size={14} />
-                  Play
-                </button>
-              )}
-            </>
+          {status === 'running' ? (
+            <button 
+              onClick={handlePause}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#1e2937', border: '1px solid var(--border-glow)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#fff', fontSize: 13 }}
+            >
+              <Pause size={14} />
+              Pause
+            </button>
           ) : (
-            <>
-              <button 
-                onClick={handleStep}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--neon-cyan-glow)', border: '1px solid var(--neon-cyan)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#fff', fontSize: 13 }}
-              >
-                <ArrowRight size={14} />
-                Next Bar
-              </button>
-            </>
+            <button 
+              onClick={handleResume}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--neon-cyan-glow)', border: '1px solid var(--neon-cyan)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#fff', fontSize: 13 }}
+            >
+              <Play size={14} />
+              Play
+            </button>
           )}
+
+          {/* Dynamic Speed Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#111827', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '5px 10px' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>SPEED:</span>
+            <select
+              value={speed}
+              onChange={async (e) => {
+                const newSpeed = Number(e.target.value);
+                setSpeed(newSpeed);
+                try {
+                  await changeReplaySpeed(newSpeed);
+                } catch (err) {
+                  console.error('Failed to change speed:', err);
+                }
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#fff',
+                fontSize: 12,
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+            >
+              {[1, 3, 5, 10, 20, 50, 100].map((s) => (
+                <option key={s} value={s}>{s}x</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Status Badge */}
+          <span style={{ 
+            fontSize: 9, 
+            fontWeight: 700, 
+            textTransform: 'uppercase', 
+            color: status === 'running' ? 'var(--neon-green)' : status === 'paused' ? 'var(--neon-cyan)' : '#ff5252',
+            background: status === 'running' ? 'rgba(0,230,118,0.1)' : status === 'paused' ? 'rgba(0,229,255,0.1)' : 'rgba(255,23,68,0.1)',
+            padding: '4px 8px',
+            borderRadius: 4,
+            letterSpacing: '0.05em'
+          }}>
+            {status}
+          </span>
 
           <button 
             onClick={handleStop}
@@ -620,7 +647,7 @@ export function ReplayPage() {
         {/* Left Side: Chart Section */}
         <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <span style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>{instrument}</span>
               <div style={{ display: 'flex', background: '#111827', borderRadius: 6, padding: 2, border: '1px solid var(--border-glow)' }}>
                 {['1m', '5m', '15m', '30m', '1h', '4h', '1d'].map((tf) => (
@@ -644,6 +671,9 @@ export function ReplayPage() {
                 ))}
               </div>
             </div>
+
+
+
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Historical Simulation</span>
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>

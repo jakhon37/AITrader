@@ -17,6 +17,44 @@ from src.data.store import DataStore
 from src.technical.loader import timeframe_to_timedelta
 
 
+from typing import AsyncIterator, Any
+
+class LazyOHLCVBarList:
+    """A memory-efficient list wrapper that instantiates OHLCVBar objects on demand."""
+
+    def __init__(self, raw_bars: list[tuple[datetime, datetime, Instrument, Timeframe, float, float, float, float, float]]) -> None:
+        self._raw_bars = raw_bars
+
+    def __len__(self) -> int:
+        return len(self._raw_bars)
+
+    def __getitem__(self, idx: int | slice) -> Any:
+        if isinstance(idx, slice):
+            return LazyOHLCVBarList(self._raw_bars[idx])
+        
+        close_time, ts, inst, tf, o, h, l, c, v = self._raw_bars[idx]
+        bar = OHLCVBar(
+            signal_id=f"bar_{inst.value}_{tf.value}_{ts.strftime('%Y%m%dT%H%M%S')}",
+            instrument=inst,
+            timeframe=tf,
+            timestamp=ts,
+            open=o,
+            high=h,
+            low=l,
+            close=c,
+            volume=v,
+            source="replay",
+        )
+        return close_time, bar
+
+    def __iter__(self):
+        for idx in range(len(self._raw_bars)):
+            yield self[idx]
+
+    def __bool__(self) -> bool:
+        return len(self._raw_bars) > 0
+
+
 class DataFeed:
     """Streams historical bars chronologically across multiple timeframes."""
 
@@ -37,12 +75,12 @@ class DataFeed:
         # Use provided clock or get the active virtual clock
         self.clock = clock or get_clock()
 
-    def _load_all_bars(self) -> list[tuple[datetime, OHLCVBar]]:
+    def _load_all_bars(self) -> LazyOHLCVBarList:
         """Load all bars in the range across all timeframes.
 
-        Returns a list of tuples: (close_time, OHLCVBar).
+        Returns a LazyOHLCVBarList which yields tuples of: (close_time, OHLCVBar).
         """
-        all_bars = []
+        all_raw_bars = []
 
         for tf in self.timeframes:
             delta = timeframe_to_timedelta(tf)
@@ -55,7 +93,16 @@ class DataFeed:
                 # No data for this timeframe in store
                 continue
 
-            for ts, row in df.iterrows():
+            # Convert dataframe columns to numpy arrays for extremely fast retrieval and low overhead
+            timestamps = df.index
+            opens = df["open"].to_numpy()
+            highs = df["high"].to_numpy()
+            lows = df["low"].to_numpy()
+            closes = df["close"].to_numpy()
+            volumes = df["volume"].to_numpy()
+
+            for i in range(len(df)):
+                ts = timestamps[i]
                 # Ensure ts is timezone-aware
                 if ts.tzinfo is None:
                     ts = ts.tz_localize("UTC")
@@ -64,25 +111,23 @@ class DataFeed:
                 
                 # We only emit bars that close within the backtest window [start, end]
                 if self.start <= close_time <= self.end:
-                    bar = OHLCVBar(
-                        signal_id=f"bar_{self.instrument.value}_{tf.value}_{ts.strftime('%Y%m%dT%H%M%S')}",
-                        instrument=self.instrument,
-                        timeframe=tf,
-                        timestamp=ts,
-                        open=float(row["open"]),
-                        high=float(row["high"]),
-                        low=float(row["low"]),
-                        close=float(row["close"]),
-                        volume=float(row["volume"]),
-                        source="replay",
-                    )
-                    all_bars.append((close_time, bar))
+                    all_raw_bars.append((
+                        close_time,
+                        ts,
+                        self.instrument,
+                        tf,
+                        float(opens[i]),
+                        float(highs[i]),
+                        float(lows[i]),
+                        float(closes[i]),
+                        float(volumes[i])
+                    ))
 
         # Sort chronologically by close time.
         # If close times are identical, process lower timeframes first.
         # We can sort by close_time, and then by timeframe duration (ascending).
-        all_bars.sort(key=lambda x: (x[0], timeframe_to_timedelta(x[1].timeframe)))
-        return all_bars
+        all_raw_bars.sort(key=lambda x: (x[0], timeframe_to_timedelta(x[3])))
+        return LazyOHLCVBarList(all_raw_bars)
 
     async def run(self, speed: float = 0.0) -> AsyncIterator[OHLCVBar]:
         """Stream bars chronologically.

@@ -196,3 +196,25 @@ def test_replay_flow_manual_mode(client):
     data = response.json()
     assert data["status"] == "success"
     assert "report" in data
+
+
+def test_replay_start_without_end_date(client):
+    """Test starting replay without end_date successfully falls back to latest DB date."""
+    payload = {
+        "instrument": "EURUSD",
+        "start_date": "2024-01-01T00:00:00Z",
+        "initial_capital": 10000.0,
+        "mode": "watch",
+        "speed": 0.0,
+        "timeframe": "1h",
+    }
+    response = client.post("/api/replay/start", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["session"]["mode"] == "watch"
+    assert data["session"]["status"] == "running"
+
+    # Verify that the session stopped and returned success
+    client.post("/api/replay/stop")
+

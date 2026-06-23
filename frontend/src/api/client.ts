@@ -47,7 +47,7 @@ export async function putInstrumentConfig(instrument: string, config: object) {
   return res.json();
 }
 
-export async function startReplay(payload: { instrument: string; start_date: string; end_date: string; initial_capital: number; mode: string; speed: number; timeframe?: string }) {
+export async function startReplay(payload: { instrument: string; start_date: string; end_date?: string; initial_capital: number; mode: string; speed: number; timeframe?: string }) {
   const res = await fetch(`${API_BASE}/replay/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -114,5 +114,15 @@ export async function changeReplayTimeframe(timeframe: string) {
     body: JSON.stringify({ timeframe }),
   });
   if (!res.ok) throw new Error('Failed to change replay timeframe');
+  return res.json();
+}
+
+export async function changeReplaySpeed(speed: number) {
+  const res = await fetch(`${API_BASE}/replay/speed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speed }),
+  });
+  if (!res.ok) throw new Error('Failed to change replay speed');
   return res.json();
 }

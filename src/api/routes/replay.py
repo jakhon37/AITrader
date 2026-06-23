@@ -18,7 +18,7 @@ router = APIRouter(prefix="/replay", tags=["replay"])
 class StartReplayRequest(BaseModel):
     instrument: str = Field(..., json_schema_extra={"example": "EURUSD"})
     start_date: str = Field(..., json_schema_extra={"example": "2024-01-01"})
-    end_date: str = Field(..., json_schema_extra={"example": "2024-01-10"})
+    end_date: Optional[str] = Field(None, json_schema_extra={"example": "2024-01-10"})
     initial_capital: float = Field(10000.0)
     mode: str = Field("watch", description="watch | manual")
     speed: float = Field(10.0, description="Speed multiplier for watch mode")
@@ -69,11 +69,43 @@ async def start_replay(request: Request, body: StartReplayRequest) -> Dict[str, 
         raise HTTPException(status_code=400, detail=f"Invalid instrument: {body.instrument}")
 
     start_dt = parse_datetime(body.start_date)
-    end_dt = parse_datetime(body.end_date)
     
     data_store = getattr(request.app.state, "data_store", None)
     if not data_store:
         raise HTTPException(status_code=500, detail="DataStore not initialized.")
+
+    if body.end_date:
+        end_dt = parse_datetime(body.end_date)
+    else:
+        # Fallback to the latest available timestamp in the database for the instrument/timeframe
+        from src.core.contracts import Timeframe
+        try:
+            tf_enum = Timeframe(body.timeframe)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid timeframe: {body.timeframe}")
+            
+        _, last_dt = data_store.list_ohlcv_range(inst, tf_enum)
+        
+        # If no data for this specific timeframe, try other timeframes in the store
+        if not last_dt:
+            instrument_root = data_store.base_dir / "raw" / inst.value
+            if instrument_root.exists():
+                for tf_dir in instrument_root.iterdir():
+                    if tf_dir.is_dir():
+                        try:
+                            other_tf = Timeframe(tf_dir.name)
+                            _, other_last = data_store.list_ohlcv_range(inst, other_tf)
+                            if other_last and (last_dt is None or other_last > last_dt):
+                                last_dt = other_last
+                        except ValueError:
+                            continue
+        
+        # If still no data found at all, fallback to current time
+        if not last_dt:
+            last_dt = datetime.now(timezone.utc)
+            logger.warning(f"No database data found for instrument {inst.value}, defaulting end_date to current time.")
+        
+        end_dt = last_dt
 
     import os
     reports_dir = os.path.join(data_store.base_dir, "reports")
@@ -115,9 +147,6 @@ async def pause_replay(request: Request) -> Dict[str, Any]:
     if not session:
         raise HTTPException(status_code=400, detail="No active replay session.")
     
-    if session.state.mode != "watch":
-        raise HTTPException(status_code=400, detail="Pause is only supported in watch mode.")
-
     await session.pause()
     return {"status": "success", "session": session.state.to_dict()}
 
@@ -129,9 +158,6 @@ async def resume_replay(request: Request) -> Dict[str, Any]:
     if not session:
         raise HTTPException(status_code=400, detail="No active replay session.")
     
-    if session.state.mode != "watch":
-        raise HTTPException(status_code=400, detail="Resume is only supported in watch mode.")
-
     await session.resume()
     return {"status": "success", "session": session.state.to_dict()}
 
@@ -203,6 +229,25 @@ async def stop_replay(request: Request) -> Dict[str, Any]:
 
     request.app.state.active_replay_session = None
     return {"status": "success", "report": report}
+
+
+class ChangeSpeedRequest(BaseModel):
+    speed: float = Field(..., gt=0.0, description="Speed multiplier for watch mode")
+
+
+@router.post("/speed")
+async def change_speed(request: Request, body: ChangeSpeedRequest) -> Dict[str, Any]:
+    """Change the speed of the active replay session dynamically."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+
+    try:
+        await session.set_speed(body.speed)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to update speed: {e}")
+
+    return {"status": "success", "session": session.state.to_dict()}
 
 
 class ChangeTimeframeRequest(BaseModel):

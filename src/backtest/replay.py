@@ -196,8 +196,6 @@ class StrategyReplaySession:
         self.state.update(total_bars=len(self._bars))
         self._current_idx = 0
         
-        last_emit_time = self.start_date
-
         try:
             while self._current_idx < len(self._bars):
                 close_time, bar = self._bars[self._current_idx]
@@ -207,9 +205,7 @@ class StrategyReplaySession:
                 # 2. Dynamic Speed Control
                 speed = self.state.speed
                 if speed > 0.0:
-                    delta = (close_time - last_emit_time).total_seconds()
-                    if delta > 0:
-                        await asyncio.sleep(min(delta / speed, 2.0))
+                    await asyncio.sleep(1.0 / speed)
                 
                 # 3. Step forward
                 self._current_bar = bar
@@ -263,7 +259,6 @@ class StrategyReplaySession:
                     session_state_dict=self.state.to_dict(),
                 )
                 
-                last_emit_time = close_time
                 
         except asyncio.CancelledError:
             pass
@@ -307,10 +302,13 @@ class ManualReplaySession:
         self.state = ReplaySessionState(
             mode="manual",
             instrument=instrument,
-            speed=0.0,  # Controlled step-by-step
+            speed=1.0,  # Start with default speed of 1.0
             timeframe=timeframe,
         )
         self.emitter = ReplayWebSocketEmitter()
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Start unpaused by default
+        self._run_task: Optional[asyncio.Task] = None
         
         self._current_bar: Optional[Any] = None
         self._last_tech_sig: Optional[TechnicalSignal] = None
@@ -356,6 +354,8 @@ class ManualReplaySession:
         # Load the very first bar to kick off
         if self._bars:
             await self.step()
+            
+        self._run_task = asyncio.create_task(self._replay_loop())
 
     async def step(self) -> None:
         """Advance one primary timeframe bar."""
@@ -390,6 +390,45 @@ class ManualReplaySession:
             if self.state.status == "ended":
                 break
             await self.step()
+
+    async def pause(self) -> None:
+        """Pause manual execution loop."""
+        self._pause_event.clear()
+        self.state.update(status="paused")
+
+    async def resume(self) -> None:
+        """Resume manual execution loop."""
+        if self.state.speed == 0.0:
+            self.state.update(speed=1.0)
+        self._pause_event.set()
+        self.state.update(status="running")
+
+    async def set_speed(self, multiplier: float) -> None:
+        """Set manual replay speed multiplier."""
+        self.state.update(speed=multiplier)
+
+    async def _replay_loop(self) -> None:
+        """Main manual simulation background loop."""
+        try:
+            while self._current_idx < len(self._bars):
+                # 1. Handle Pausing
+                await self._pause_event.wait()
+                
+                # 2. Dynamic Speed Control
+                speed = self.state.speed
+                if speed > 0.0:
+                    await asyncio.sleep(1.0 / speed)
+                else:
+                    self._pause_event.clear()
+                    self.state.update(status="paused")
+                    continue
+                
+                # 3. Advance bar
+                await self.step()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in manual replay loop: {e}")
 
     async def place_order(self, side: OrderSide, size: float) -> Order:
         """Place manual trade order (publishes TradeSignal to isolated bus)."""
@@ -518,6 +557,12 @@ class ManualReplaySession:
 
     async def end_session(self) -> Dict[str, Any]:
         """Terminate session and run performance scorer."""
+        if self._run_task:
+            self._run_task.cancel()
+            try:
+                await self._run_task
+            except asyncio.CancelledError:
+                pass
         self.state.update(status="ended")
         
         if self.tech_engine:
