@@ -194,7 +194,14 @@ class BaseReplaySession:
                     current_time,
                     self.end_date,
                 )
-                self.state.update(total_bars=len(df))
+                is_weekend = (
+                    (df.index.weekday == 5) |
+                    ((df.index.weekday == 4) & (df.index.hour >= 22)) |
+                    ((df.index.weekday == 6) & (df.index.hour < 22))
+                )
+                is_empty = (df["volume"] == 0) & (df["open"] == df["close"])
+                df_filtered = df[~(is_weekend | is_empty)]
+                self.state.update(total_bars=len(df_filtered))
             except Exception as exc:
                 logger.warning("Failed to refresh total bar count: %s", exc)
 

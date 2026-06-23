@@ -97,7 +97,14 @@ class StrategyLoopMixin:
                     self.start_date,  # type: ignore[attr-defined]
                     self.end_date,  # type: ignore[attr-defined]
                 )
-                self.state.update(total_bars=len(df))  # type: ignore[attr-defined]
+                is_weekend = (
+                    (df.index.weekday == 5) |
+                    ((df.index.weekday == 4) & (df.index.hour >= 22)) |
+                    ((df.index.weekday == 6) & (df.index.hour < 22))
+                )
+                is_empty = (df["volume"] == 0) & (df["open"] == df["close"])
+                df_filtered = df[~(is_weekend | is_empty)]
+                self.state.update(total_bars=len(df_filtered))  # type: ignore[attr-defined]
             except Exception as exc:
                 logger.warning("Could not fetch total bar count: %s", exc)
                 self.state.update(total_bars=len(self._bars))  # type: ignore[attr-defined]

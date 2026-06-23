@@ -58,6 +58,28 @@ class LazyOHLCVBarList:
         self._raw_bars.extend(other._raw_bars)
 
 
+def is_trading_bar(ts: datetime, o: float, c: float, v: float) -> bool:
+    """Filter out weekend and empty/holiday bars.
+    
+    Weekend is defined as Friday 22:00 UTC to Sunday 22:00 UTC.
+    """
+    wd = ts.weekday()
+    h = ts.hour
+
+    if wd == 5:  # Saturday
+        return False
+    if wd == 4 and h >= 22:  # Friday after 22:00
+        return False
+    if wd == 6 and h < 22:  # Sunday before 22:00
+        return False
+
+    # Empty bars (volume == 0 and open == close) are holidays or closed sessions
+    if v == 0.0 and o == c:
+        return False
+
+    return True
+
+
 class DataFeed:
     """Streams historical bars chronologically across multiple timeframes."""
 
@@ -114,17 +136,18 @@ class DataFeed:
                 
                 # We only emit bars that close within the backtest window [start, end]
                 if self.start <= close_time <= self.end:
-                    all_raw_bars.append((
-                        close_time,
-                        ts,
-                        self.instrument,
-                        tf,
-                        float(opens[i]),
-                        float(highs[i]),
-                        float(lows[i]),
-                        float(closes[i]),
-                        float(volumes[i])
-                    ))
+                    if is_trading_bar(ts, float(opens[i]), float(closes[i]), float(volumes[i])):
+                        all_raw_bars.append((
+                            close_time,
+                            ts,
+                            self.instrument,
+                            tf,
+                            float(opens[i]),
+                            float(highs[i]),
+                            float(lows[i]),
+                            float(closes[i]),
+                            float(volumes[i])
+                        ))
 
         # Sort chronologically by close time.
         # If close times are identical, process lower timeframes first.
