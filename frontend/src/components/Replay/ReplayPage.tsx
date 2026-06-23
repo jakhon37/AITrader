@@ -21,7 +21,8 @@ import {
   stopReplay, 
   getReplayState,
   changeReplayTimeframe,
-  changeReplaySpeed
+  changeReplaySpeed,
+  changeReplayIndicators
 } from '../../api/client';
 import { CandleChart } from '../Chart/CandleChart';
 
@@ -33,6 +34,7 @@ export function ReplayPage() {
   const [initialCapital, setInitialCapital] = useState(10000);
   const [mode, setMode] = useState<'watch' | 'manual'>('manual');
   const [speed, setSpeed] = useState(10);
+  const [calculateIndicators, setCalculateIndicators] = useState(true);
 
   // Active Session State
   const [isActive, setIsActive] = useState(false);
@@ -64,6 +66,9 @@ export function ReplayPage() {
           setSpeed(res.session.speed);
           setCurrentTime(res.session.current_time);
           setSessionState(res.session);
+          if (res.session.calculate_indicators !== undefined) {
+            setCalculateIndicators(res.session.calculate_indicators);
+          }
         }
       })
       .catch((err) => console.error('Failed to restore replay state:', err));
@@ -80,6 +85,9 @@ export function ReplayPage() {
         setCurrentTime(session_state.current_time);
         if (session_state.timeframe) {
           setTimeframe(session_state.timeframe);
+        }
+        if (session_state.calculate_indicators !== undefined) {
+          setCalculateIndicators(session_state.calculate_indicators);
         }
         
         if (session_state.status === 'ended') {
@@ -108,6 +116,7 @@ export function ReplayPage() {
         mode,
         speed: mode === 'watch' ? speed : 0.0,
         timeframe,
+        calculate_indicators: calculateIndicators,
       };
       const res = await startReplay(payload);
       if (res.status === 'success') {
@@ -381,6 +390,29 @@ export function ReplayPage() {
               </div>
             </div>
           )}
+          {/* Indicator Calculations Switch */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between', 
+            padding: '12px 16px', 
+            background: '#111827', 
+            border: '1px solid var(--border-glow)', 
+            borderRadius: 8, 
+            marginTop: 4 
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: '80%' }}>
+              <span style={{ fontWeight: 600, fontSize: 13, color: '#fff' }}>Enable Technical Indicators</span>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Computes confluence and indicators (RSI, regime, etc.) on each bar. Turn off for maximum speed.</span>
+            </div>
+            <input 
+              type="checkbox"
+              checked={calculateIndicators}
+              onChange={(e) => setCalculateIndicators(e.target.checked)}
+              style={{ width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--neon-cyan)' }}
+            />
+          </div>
+
 
           <button 
             type="button"
@@ -609,6 +641,25 @@ export function ReplayPage() {
                 <option key={s} value={s}>{s}x</option>
               ))}
             </select>
+          </div>
+ 
+          {/* Dynamic Indicators Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#111827', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '5px 10px' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>INDICATORS:</span>
+            <input 
+              type="checkbox"
+              checked={calculateIndicators}
+              onChange={async (e) => {
+                const checked = e.target.checked;
+                setCalculateIndicators(checked);
+                try {
+                  await changeReplayIndicators(checked);
+                } catch (err) {
+                  console.error('Failed to change indicators status:', err);
+                }
+              }}
+              style={{ cursor: 'pointer', accentColor: 'var(--neon-cyan)', width: 14, height: 14 }}
+            />
           </div>
 
           {/* Status Badge */}

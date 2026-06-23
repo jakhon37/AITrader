@@ -47,6 +47,7 @@ class TechnicalEngine:
 
         self.loader = TechnicalDataLoader(store)
         self.is_running = False
+        self.enabled = True
 
     async def start(self) -> None:
         """Start the engine and subscribe to OHLCV_BAR channel."""
@@ -68,6 +69,8 @@ class TechnicalEngine:
 
     async def on_ohlcv_bar(self, payload: Any) -> None:
         """Handle incoming OHLCVBar from the bus."""
+        if not getattr(self, "enabled", True):
+            return
         if not isinstance(payload, OHLCVBar):
             # Parse or validate if needed (Pydantic v2 validation is handled at bus layer)
             return

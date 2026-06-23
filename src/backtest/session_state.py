@@ -20,6 +20,7 @@ class ReplaySessionState:
         total_bars: int = 0,
         speed: float = 1.0,
         timeframe: str = "1h",
+        calculate_indicators: bool = True,
     ) -> None:
         self._lock = threading.Lock()
         self._mode = mode
@@ -30,6 +31,7 @@ class ReplaySessionState:
         self._speed = speed
         self._instrument = instrument
         self._timeframe = timeframe
+        self._calculate_indicators = calculate_indicators
         self._open_positions: List[PositionSummary] = []
         self._trade_history: List[Order] = []
         self._current_portfolio: Optional[PortfolioState] = None
@@ -73,6 +75,11 @@ class ReplaySessionState:
             return self._speed
 
     @property
+    def calculate_indicators(self) -> bool:
+        with self._lock:
+            return self._calculate_indicators
+
+    @property
     def instrument(self) -> Instrument:
         with self._lock:
             return self._instrument
@@ -104,6 +111,7 @@ class ReplaySessionState:
                 "speed": self._speed,
                 "instrument": self._instrument.value,
                 "timeframe": self._timeframe,
+                "calculate_indicators": self._calculate_indicators,
                 "open_positions": [json.loads(p.model_dump_json()) for p in self._open_positions],
                 "trade_history": [
                     o.model_dump() if hasattr(o, "model_dump")

@@ -238,17 +238,11 @@ def compute_swing_pivots(df: pd.DataFrame, window: int = 3) -> pd.DataFrame:
     high = df["high"]
     low = df["low"]
 
-    swing_high = pd.Series(np.nan, index=df.index)
-    swing_low = pd.Series(np.nan, index=df.index)
+    rolling_high = high.rolling(window=2 * window + 1, center=True).max()
+    rolling_low = low.rolling(window=2 * window + 1, center=True).min()
 
-    for i in range(window, len(df) - window):
-        slice_high = high.iloc[i - window : i + window + 1]
-        if high.iloc[i] == slice_high.max():
-            swing_high.iloc[i] = high.iloc[i]
-        
-        slice_low = low.iloc[i - window : i + window + 1]
-        if low.iloc[i] == slice_low.min():
-            swing_low.iloc[i] = low.iloc[i]
+    swing_high = high.where(high == rolling_high)
+    swing_low = low.where(low == rolling_low)
 
     return pd.DataFrame({"swing_high": swing_high, "swing_low": swing_low}, index=df.index)
 

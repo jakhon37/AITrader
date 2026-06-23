@@ -67,6 +67,7 @@ class StrategyReplaySession:
         store: Optional[DataStore] = None,
         reports_dir: str = "data/reports",
         timeframe: str = "1h",
+        calculate_indicators: bool = True,
     ) -> None:
         self.reporter = ReplayReporter(reports_dir=reports_dir)
         self.instrument = instrument
@@ -97,8 +98,10 @@ class StrategyReplaySession:
             instrument=instrument,
             speed=speed,
             timeframe=timeframe,
+            calculate_indicators=calculate_indicators,
         )
         self.emitter = ReplayWebSocketEmitter()
+        self.tech_engine: Optional[TechnicalEngine] = None
         
         self._current_bar: Optional[Any] = None
         self._last_tech_sig: Optional[TechnicalSignal] = None
@@ -152,6 +155,12 @@ class StrategyReplaySession:
             except asyncio.CancelledError:
                 pass
         self.state.update(status="ended")
+
+    async def set_indicators_enabled(self, enabled: bool) -> None:
+        """Enable or disable indicators dynamically."""
+        self.state.update(calculate_indicators=enabled)
+        if self.tech_engine:
+            self.tech_engine.enabled = enabled
 
     async def _load_next_bars_chunk(self) -> None:
         """Fetch the next chunk of bars from the database and extend the active list."""
@@ -232,11 +241,12 @@ class StrategyReplaySession:
     async def _replay_loop(self) -> None:
         """Main simulation execution loop."""
         # Setup engines
-        tech_engine = TechnicalEngine(
+        self.tech_engine = TechnicalEngine(
             bus=self.bus,
             store=self.store,
             instruments_config=self.inst_configs,
         )
+        self.tech_engine.enabled = self.state.calculate_indicators
         decision_engine = MockDecisionEngine(self.bus)
         exec_engine = MockExecutionEngine(self.bus, initial_capital=self.initial_capital)
         
@@ -251,7 +261,7 @@ class StrategyReplaySession:
         await self.bus.subscribe(BusChannel.TRADE_SIGNAL, on_trade_signal)
 
         # Start engines
-        await tech_engine.start()
+        await self.tech_engine.start()
         await decision_engine.start()
         await exec_engine.start()
 
@@ -290,16 +300,22 @@ class StrategyReplaySession:
 
         asyncio.create_task(fetch_total_bars())
         
+        accumulated_sleep = 0.0
+        MIN_SLEEP_INTERVAL = 0.02
         try:
             while self._current_idx < len(self._bars):
                 close_time, bar = self._bars[self._current_idx]
                 # 1. Handle Pausing
                 await self._pause_event.wait()
                 
-                # 2. Dynamic Speed Control
+                # 2. Dynamic Speed Control & Sleep Throttling
                 speed = self.state.speed
                 if speed > 0.0:
-                    await asyncio.sleep(1.0 / speed)
+                    per_bar_delay = 1.0 / speed
+                    accumulated_sleep += per_bar_delay
+                    if accumulated_sleep >= MIN_SLEEP_INTERVAL:
+                        await asyncio.sleep(accumulated_sleep)
+                        accumulated_sleep = 0.0
                 
                 # 3. Step forward
                 self._current_bar = bar
@@ -362,7 +378,8 @@ class StrategyReplaySession:
             pass
         finally:
             # Stop components
-            await tech_engine.stop()
+            if self.tech_engine:
+                await self.tech_engine.stop()
             await decision_engine.stop()
             await exec_engine.stop()
             await self.bus.unsubscribe(BusChannel.TECHNICAL_SIGNAL, on_tech_signal)
@@ -381,6 +398,7 @@ class ManualReplaySession:
         store: Optional[DataStore] = None,
         reports_dir: str = "data/reports",
         timeframe: str = "1h",
+        calculate_indicators: bool = True,
     ) -> None:
         self.reporter = ReplayReporter(reports_dir=reports_dir)
         self.instrument = instrument
@@ -410,6 +428,7 @@ class ManualReplaySession:
             instrument=instrument,
             speed=1.0,  # Start with default speed of 1.0
             timeframe=timeframe,
+            calculate_indicators=calculate_indicators,
         )
         self.emitter = ReplayWebSocketEmitter()
         self._pause_event = asyncio.Event()
@@ -431,6 +450,7 @@ class ManualReplaySession:
             store=self.store,
             instruments_config=self.inst_configs,
         )
+        self.tech_engine.enabled = self.state.calculate_indicators
         # Decision engine is omitted in manual mode
         self.exec_engine = MockExecutionEngine(self.bus, initial_capital=self.initial_capital)
         
@@ -537,14 +557,20 @@ class ManualReplaySession:
     async def _replay_loop(self) -> None:
         """Main manual simulation background loop."""
         try:
+            accumulated_sleep = 0.0
+            MIN_SLEEP_INTERVAL = 0.02
             while self._current_idx < len(self._bars):
                 # 1. Handle Pausing
                 await self._pause_event.wait()
                 
-                # 2. Dynamic Speed Control
+                # 2. Dynamic Speed Control & Sleep Throttling
                 speed = self.state.speed
                 if speed > 0.0:
-                    await asyncio.sleep(1.0 / speed)
+                    per_bar_delay = 1.0 / speed
+                    accumulated_sleep += per_bar_delay
+                    if accumulated_sleep >= MIN_SLEEP_INTERVAL:
+                        await asyncio.sleep(accumulated_sleep)
+                        accumulated_sleep = 0.0
                 else:
                     self._pause_event.clear()
                     self.state.update(status="paused")
@@ -735,6 +761,12 @@ class ManualReplaySession:
         )
         
         return scorecard
+
+    async def set_indicators_enabled(self, enabled: bool) -> None:
+        """Enable or disable indicators dynamically."""
+        self.state.update(calculate_indicators=enabled)
+        if self.tech_engine:
+            self.tech_engine.enabled = enabled
 
     async def _load_next_bars_chunk(self) -> None:
         """Fetch the next chunk of bars from the database and extend the active list."""

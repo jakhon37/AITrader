@@ -218,3 +218,31 @@ def test_replay_start_without_end_date(client):
     # Verify that the session stopped and returned success
     client.post("/api/replay/stop")
 
+
+def test_replay_toggle_indicators(client):
+    """Test toggling technical indicators calculation dynamically during session."""
+    payload = {
+        "instrument": "EURUSD",
+        "start_date": "2024-01-01T00:00:00Z",
+        "initial_capital": 10000.0,
+        "mode": "watch",
+        "speed": 0.0,
+        "timeframe": "1h",
+        "calculate_indicators": True,
+    }
+    response = client.post("/api/replay/start", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session"]["calculate_indicators"] is True
+
+    # Toggle indicators off
+    toggle_payload = {"enabled": False}
+    response = client.post("/api/replay/indicators", json=toggle_payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["session"]["calculate_indicators"] is False
+
+    # Stop session
+    client.post("/api/replay/stop")
+

@@ -47,13 +47,23 @@ export async function putInstrumentConfig(instrument: string, config: object) {
   return res.json();
 }
 
-export async function startReplay(payload: { instrument: string; start_date: string; end_date?: string; initial_capital: number; mode: string; speed: number; timeframe?: string }) {
+export async function startReplay(payload: { instrument: string; start_date: string; end_date?: string; initial_capital: number; mode: string; speed: number; timeframe?: string; calculate_indicators?: boolean }) {
   const res = await fetch(`${API_BASE}/replay/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Failed to start replay');
+  return res.json();
+}
+
+export async function changeReplayIndicators(enabled: boolean) {
+  const res = await fetch(`${API_BASE}/replay/indicators`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error('Failed to update indicators status');
   return res.json();
 }
 

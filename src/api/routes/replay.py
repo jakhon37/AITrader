@@ -23,6 +23,7 @@ class StartReplayRequest(BaseModel):
     mode: str = Field("watch", description="watch | manual")
     speed: float = Field(10.0, description="Speed multiplier for watch mode")
     timeframe: str = Field("1h", description="1m | 5m | 15m | 30m | 1h | 4h | 1d")
+    calculate_indicators: bool = Field(True, description="Enable or disable technical indicator calculations")
 
 
 class ManualOrderRequest(BaseModel):
@@ -120,6 +121,7 @@ async def start_replay(request: Request, body: StartReplayRequest) -> Dict[str, 
             store=data_store,
             reports_dir=reports_dir,
             timeframe=body.timeframe,
+            calculate_indicators=body.calculate_indicators,
         )
     elif body.mode == "manual":
         session = ManualReplaySession(
@@ -130,6 +132,7 @@ async def start_replay(request: Request, body: StartReplayRequest) -> Dict[str, 
             store=data_store,
             reports_dir=reports_dir,
             timeframe=body.timeframe,
+            calculate_indicators=body.calculate_indicators,
         )
     else:
         raise HTTPException(status_code=400, detail="Mode must be 'watch' or 'manual'.")
@@ -265,6 +268,25 @@ async def change_timeframe(request: Request, body: ChangeTimeframeRequest) -> Di
         await session.update_timeframe(body.timeframe)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to update timeframe: {e}")
+        
+    return {"status": "success", "session": session.state.to_dict()}
+
+
+class ChangeIndicatorsRequest(BaseModel):
+    enabled: bool = Field(..., description="Enable or disable technical indicator calculations")
+
+
+@router.post("/indicators")
+async def change_indicators(request: Request, body: ChangeIndicatorsRequest) -> Dict[str, Any]:
+    """Enable or disable indicators in the active session dynamically."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+    
+    try:
+        await session.set_indicators_enabled(body.enabled)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to update indicator status: {e}")
         
     return {"status": "success", "session": session.state.to_dict()}
 
