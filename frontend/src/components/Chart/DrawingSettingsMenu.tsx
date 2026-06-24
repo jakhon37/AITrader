@@ -32,6 +32,39 @@ function dropdownPanelStyle(direction: DropdownDirection): CSSProperties {
     : { ...DROPDOWN_PANEL_BASE, bottom: 'calc(100% + 8px)' };
 }
 
+const ICON_BTN_BASE: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '5px',
+  border: 'none',
+  borderRadius: '6px',
+  padding: '4px 8px',
+  color: '#fff',
+  fontSize: '11px',
+  cursor: 'pointer',
+  height: '26px',
+  transition: 'background 0.15s ease, box-shadow 0.15s ease',
+  backdropFilter: 'blur(10px)',
+  WebkitBackdropFilter: 'blur(10px)',
+};
+
+function iconBtnStyle(active: boolean): CSSProperties {
+  return {
+    ...ICON_BTN_BASE,
+    background: active ? 'rgba(14, 20, 32, 0.82)' : 'rgba(14, 20, 32, 0.48)',
+    boxShadow: active ? '0 2px 10px rgba(0, 0, 0, 0.35)' : '0 1px 4px rgba(0, 0, 0, 0.18)',
+  };
+}
+
+const ICON_ONLY_BTN: CSSProperties = {
+  ...ICON_BTN_BASE,
+  padding: '4px 6px',
+  justifyContent: 'center',
+  width: '26px',
+  background: 'rgba(14, 20, 32, 0.48)',
+  boxShadow: '0 1px 4px rgba(0, 0, 0, 0.18)',
+};
+
 export function DrawingSettingsMenu({
   selectedDrawing,
   position,
@@ -89,14 +122,7 @@ export function DrawingSettingsMenu({
         top: `${position.top}px`,
         display: 'flex',
         alignItems: 'center',
-        gap: '6px',
-        padding: '6px 10px',
-        borderRadius: '8px',
-        background: 'rgba(14, 20, 32, 0.95)',
-        border: '1px solid var(--border-glow)',
-        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.6)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
+        gap: '4px',
         zIndex: 1000001,
         userSelect: 'none',
         pointerEvents: 'auto',
@@ -105,21 +131,9 @@ export function DrawingSettingsMenu({
       {/* Color Trigger & Dropdown */}
       <div style={{ position: 'relative' }}>
         <button
+          type="button"
           onClick={() => toggleDropdown('color')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: activeDropdown === 'color' ? 'rgba(255,255,255,0.1)' : 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '6px',
-            padding: '4px 8px',
-            color: '#fff',
-            fontSize: '11px',
-            cursor: 'pointer',
-            height: '26px',
-            transition: 'all 0.15s ease',
-          }}
+          style={iconBtnStyle(activeDropdown === 'color')}
         >
           <span
             style={{
@@ -172,21 +186,9 @@ export function DrawingSettingsMenu({
       {/* Line Width Trigger & Dropdown */}
       <div style={{ position: 'relative' }}>
         <button
+          type="button"
           onClick={() => toggleDropdown('width')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: activeDropdown === 'width' ? 'rgba(255,255,255,0.1)' : 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '6px',
-            padding: '4px 8px',
-            color: '#fff',
-            fontSize: '11px',
-            cursor: 'pointer',
-            height: '26px',
-            transition: 'all 0.15s ease',
-          }}
+          style={iconBtnStyle(activeDropdown === 'width')}
         >
           <span>{selectedDrawing.lineWidth}px</span>
           <ChevronDown size={12} style={{ opacity: 0.6 }} />
@@ -252,21 +254,9 @@ export function DrawingSettingsMenu({
       {/* Opacity Trigger & Dropdown */}
       <div style={{ position: 'relative' }}>
         <button
+          type="button"
           onClick={() => toggleDropdown('opacity')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            background: activeDropdown === 'opacity' ? 'rgba(255,255,255,0.1)' : 'transparent',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '6px',
-            padding: '4px 8px',
-            color: '#fff',
-            fontSize: '11px',
-            cursor: 'pointer',
-            height: '26px',
-            transition: 'all 0.15s ease',
-          }}
+          style={iconBtnStyle(activeDropdown === 'opacity')}
         >
           <span>Opacity: {Math.round(selectedDrawing.opacity * 100)}%</span>
           <ChevronDown size={12} style={{ opacity: 0.6 }} />
@@ -325,21 +315,9 @@ export function DrawingSettingsMenu({
       {(selectedDrawing.type === 'box' || selectedDrawing.type === 'fibonacci') && (
         <div style={{ position: 'relative' }}>
           <button
+            type="button"
             onClick={() => toggleDropdown('options')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: activeDropdown === 'options' ? 'rgba(255,255,255,0.1)' : 'transparent',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '6px',
-              padding: '4px 8px',
-              color: '#fff',
-              fontSize: '11px',
-              cursor: 'pointer',
-              height: '26px',
-              transition: 'all 0.15s ease',
-            }}
+            style={iconBtnStyle(activeDropdown === 'options')}
           >
             <span>Style</span>
             <ChevronDown size={12} style={{ opacity: 0.6 }} />
@@ -412,21 +390,9 @@ export function DrawingSettingsMenu({
       {selectedDrawing.type === 'fibonacci' && onUpdateFibLevels && (
         <div style={{ position: 'relative' }}>
           <button
+            type="button"
             onClick={() => toggleDropdown('levels')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              background: activeDropdown === 'levels' ? 'rgba(255,255,255,0.1)' : 'transparent',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '6px',
-              padding: '4px 8px',
-              color: '#fff',
-              fontSize: '11px',
-              cursor: 'pointer',
-              height: '26px',
-              transition: 'all 0.15s ease',
-            }}
+            style={iconBtnStyle(activeDropdown === 'levels')}
           >
             <span>Levels ({currentLevels.length})</span>
             <ChevronDown size={12} style={{ opacity: 0.6 }} />
@@ -545,33 +511,22 @@ export function DrawingSettingsMenu({
         </div>
       )}
 
-      <div style={{ width: '1px', height: '18px', background: 'rgba(255,255,255,0.15)' }} />
-
       {/* Delete Button */}
       <button
+        type="button"
         onClick={onDelete}
         title="Delete Drawing"
         style={{
-          background: 'transparent',
-          border: 'none',
+          ...ICON_ONLY_BTN,
           color: 'var(--text-muted)',
-          cursor: 'pointer',
-          padding: '6px',
-          borderRadius: '6px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          transition: 'all 0.15s ease',
-          height: '26px',
-          width: '26px',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.color = 'var(--neon-red)';
-          e.currentTarget.style.background = 'var(--neon-red-glow)';
+          e.currentTarget.style.background = 'rgba(255, 23, 68, 0.35)';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.color = 'var(--text-muted)';
-          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.background = 'rgba(14, 20, 32, 0.48)';
         }}
       >
         <Trash2 size={14} />

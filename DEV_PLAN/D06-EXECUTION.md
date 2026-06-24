@@ -169,9 +169,13 @@ Integration:
 10. Milestone: paper trading loop running; trades logged with signal_id
 
 ### Phase 5+ (live broker)
-11. Implement brokers/oanda.py against OANDA v20 REST
-12. Live integration tests on OANDA practice account
-13. ModeGate live path full verification
+See also: `docs/broker-integration-roadmap.md` (regional alternatives if OANDA unavailable).
+
+11. Broker factory + config switch (`mock` | `ibkr` | `mt5` | `dukascopy` | `oanda`)
+12. Implement first demo adapter (prefer IBKR paper if account opens; else MT5 or Dukascopy)
+13. Optional: `brokers/oanda.py` against OANDA v20 REST (when region allows)
+14. Live integration tests on demo/paper account only
+15. ModeGate live path full verification
 
 ---
 

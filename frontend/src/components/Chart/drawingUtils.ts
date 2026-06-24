@@ -139,7 +139,7 @@ export const isNearAnyHandle = (
 export type SettingsMenuPlacement = 'above' | 'below';
 export type DropdownDirection = 'up' | 'down';
 
-const MENU_BAR_HEIGHT = 40;
+const MENU_BAR_HEIGHT = 28;
 const DROPDOWN_MAX_HEIGHT = 170;
 const MENU_EDGE_MARGIN = 10;
 

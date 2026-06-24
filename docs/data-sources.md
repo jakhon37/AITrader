@@ -3,7 +3,8 @@
 ## Forex
 
 - **CSV:** Place files under `data/forex_raw/` or `data/raw/`. Expected columns: date/datetime, open, high, low, close, [volume]. Use `data.loaders.load_ohlcv_csv` to load.
-- **Brokers:** OANDA, FXCM — use broker API; credentials via env.
+- **Brokers:** OANDA, FXCM — use broker API; credentials via env. Live order adapters are
+  not implemented yet; see [broker-integration-roadmap.md](./broker-integration-roadmap.md).
 
 ## Gold
 

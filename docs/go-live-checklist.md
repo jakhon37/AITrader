@@ -64,8 +64,12 @@ This checklist ensures all critical systems are ready before transitioning from 
 
 ## ✅ Phase 3: Broker Integration
 
+> **Planning:** See [broker-integration-roadmap.md](./broker-integration-roadmap.md) for
+> current execution state, OANDA alternatives (IBKR, MT5, Dukascopy), and regional notes
+> (e.g. South Korea, Uzbekistan).
+
 ### Broker Setup
-- [ ] Real broker account opened (OANDA, Interactive Brokers, etc.)
+- [ ] Real broker account opened (IBKR, MT5 broker, Dukascopy, or OANDA if available in your region)
 - [ ] Account funded (start small: $5K-10K recommended)
 - [ ] API access enabled
 - [ ] API keys generated and stored securely
