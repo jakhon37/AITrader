@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, type MutableRefObject } from 'react';
 
 interface WebSocketHookOptions {
   instrument: string;
   timeframe: string;
   onNewBar?: (bar: any) => void;
   updateBar: (bar: any) => void;
+  /** When set, the chart is in replay mode — ignore live ohlcv_bar feeds. */
+  virtualEndTimeRef?: MutableRefObject<string | undefined>;
 }
 
 export function useChartWebSocket({
@@ -12,9 +14,15 @@ export function useChartWebSocket({
   timeframe,
   onNewBar,
   updateBar,
+  virtualEndTimeRef,
 }: WebSocketHookOptions) {
   useEffect(() => {
     const handleOhlcvBar = (e: Event) => {
+      // During replay, bars arrive via replay_frame only. Live scheduler bars
+      // (registered when the chart fetches history) carry far-future timestamps
+      // and freeze the price-line indicator on a stale value.
+      if (virtualEndTimeRef?.current) return;
+
       const customEvent = e as CustomEvent<{ instrument: string; timeframe: string; bar: any }>;
       const { instrument: barInst, timeframe: barTf, bar } = customEvent.detail;
       if (barInst.toUpperCase() === instrument.toUpperCase() && barTf === timeframe) {
@@ -56,5 +64,5 @@ export function useChartWebSocket({
       window.removeEventListener('ohlcv_bar', handleOhlcvBar);
       window.removeEventListener('replay_frame', handleReplayFrame);
     };
-  }, [instrument, timeframe, onNewBar, updateBar]);
+  }, [instrument, timeframe, onNewBar, updateBar, virtualEndTimeRef]);
 }

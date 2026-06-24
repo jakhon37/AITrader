@@ -56,6 +56,7 @@ class TradingMixin:
         if not self._current_bar:  # type: ignore[attr-defined]
             raise ValueError("No active bar — cannot determine entry price.")
 
+        is_lim = entry_price is not None
         actual_entry: float = entry_price if entry_price is not None else self._current_bar.close
         sig_id = new_signal_id()
 
@@ -87,6 +88,7 @@ class TradingMixin:
             narrative="Manual trader execution",
             sources=SignalSource(fundamental=None, technical=None),
             model_version="manual",
+            is_limit=is_lim,
         )
         await self.bus.publish(BusChannel.TRADE_SIGNAL, trade_sig)  # type: ignore[attr-defined]
         await asyncio.sleep(0.02)  # let exec engine process
@@ -107,15 +109,15 @@ class TradingMixin:
             instrument=self.instrument,  # type: ignore[attr-defined]
             side=side,
             size=size,
-            order_type="market",
-            limit_price=None,
+            order_type="limit" if is_lim else "market",
+            limit_price=entry_price if is_lim else None,
             stop_price=None,
             sl=sl,
             tp=tp,
-            status=OrderStatus.FILLED,
+            status=OrderStatus.PENDING if is_lim else OrderStatus.FILLED,
             created_at=self.clock.now(),  # type: ignore[attr-defined]
-            filled_at=self.clock.now(),  # type: ignore[attr-defined]
-            filled_price=actual_entry,
+            filled_at=None if is_lim else self.clock.now(),  # type: ignore[attr-defined]
+            filled_price=None if is_lim else actual_entry,
             execution_mode="paper",
         )
 

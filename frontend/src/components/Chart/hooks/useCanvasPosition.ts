@@ -70,5 +70,16 @@ export function useCanvasPosition(
     return { time: Number(time), price };
   };
 
-  return { position, mapPointToPixels, mapPixelsToPoint };
+  const mapPixelToPrice = (clientY: number) => {
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const y = clientY - rect.top;
+    return candleSeries.coordinateToPrice(y);
+  };
+
+  const mapPriceToY = (price: number) => {
+    return candleSeries.priceToCoordinate(price);
+  };
+
+  return { position, mapPointToPixels, mapPixelsToPoint, mapPixelToPrice, mapPriceToY };
 }

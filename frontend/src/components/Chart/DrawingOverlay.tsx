@@ -69,7 +69,7 @@ export function DrawingOverlay({
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
 
   // Hook 1: Layout alignment & Coordinate projection
-  const { position, mapPointToPixels, mapPixelsToPoint } = useCanvasPosition(
+  const { position, mapPointToPixels, mapPixelsToPoint, mapPixelToPrice, mapPriceToY } = useCanvasPosition(
     chart,
     candleSeries,
     containerRef,
@@ -119,6 +119,8 @@ export function DrawingOverlay({
     rangeChangeKey,
     mapPixelsToPoint,
     mapPointToPixels,
+    mapPixelToPrice,
+    mapPriceToY,
     currentExtendRight,
     currentFibLevels,
     entryLinePrice,
@@ -249,8 +251,16 @@ export function DrawingOverlay({
 
   if (position.width === 0) return null;
 
+  const hasOrderLines =
+    (entryLinePrice != null && entryLinePrice > 0) ||
+    (slLinePrice != null && slLinePrice > 0) ||
+    (tpLinePrice != null && tpLinePrice > 0);
+
   const selectedDrawing = drawings.find((d) => d.id === selectedDrawingId);
   const menuPos = getSettingsMenuPosition(selectedDrawingId, drawings, mapPointToPixels, position.width);
+
+  const orderLineActive =
+    hoveredOrderLine !== null || (dragState?.type === 'order_line');
 
   return (
     <>
@@ -269,11 +279,11 @@ export function DrawingOverlay({
           width: `${position.width}px`,
           height: `${position.height}px`,
           zIndex: 999999, // Render on top of the entire chart widget
-          pointerEvents: activeTool === 'select' 
-            ? (isHoveringDrawing || isHoveringHandle || hoveredOrderLine !== null || selectedDrawingId !== null || dragState !== null ? 'auto' : 'none') 
+          pointerEvents: activeTool === 'select'
+            ? (isHoveringDrawing || isHoveringHandle || orderLineActive || (hasOrderLines && dragState !== null) ? 'auto' : 'none')
             : 'auto',
-          cursor: activeTool === 'select' 
-            ? (hoveredOrderLine !== null || (dragState && (dragState as any).type === 'order_line') ? 'ns-resize' : (isHoveringHandle ? 'move' : (isHoveringDrawing ? 'pointer' : 'default'))) 
+          cursor: activeTool === 'select'
+            ? (orderLineActive ? 'ns-resize' : (isHoveringHandle ? 'move' : (isHoveringDrawing ? 'pointer' : 'default')))
             : 'crosshair',
         }}
       />

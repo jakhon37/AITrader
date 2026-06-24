@@ -64,16 +64,23 @@ export function useChartScrolling({
           }
 
           const merged = [...filteredChunk, ...dataRef.current];
-          let finalData = merged;
-          if (merged.length > MAX_BUFFER) {
-            finalData = merged.slice(0, MAX_BUFFER);
+          // Deduplicate and sort ascending by time
+          const uniqueMap = new Map<number, any>();
+          for (const item of merged) {
+            uniqueMap.set(item.time, item);
+          }
+          const sortedUnique = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+
+          let finalData = sortedUnique;
+          if (sortedUnique.length > MAX_BUFFER) {
+            finalData = sortedUnique.slice(0, MAX_BUFFER);
             pag.hasNewerHistory = true;
           }
 
           dataRef.current = finalData;
 
           const currentVisibleRange = chart.timeScale().getVisibleLogicalRange();
-          const addedBarsCount = filteredChunk.length;
+          const addedBarsCount = finalData.filter((d) => d.time < oldestTime).length;
 
           candleSeries.setData(finalData.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
           volumeSeries.setData(finalData.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
@@ -120,11 +127,18 @@ export function useChartScrolling({
           }
 
           const merged = [...dataRef.current, ...filteredChunk];
+          // Deduplicate and sort ascending by time
+          const uniqueMap = new Map<number, any>();
+          for (const item of merged) {
+            uniqueMap.set(item.time, item);
+          }
+          const sortedUnique = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+
           let removedFromLeft = 0;
-          let finalData = merged;
-          if (merged.length > MAX_BUFFER) {
-            removedFromLeft = merged.length - MAX_BUFFER;
-            finalData = merged.slice(removedFromLeft);
+          let finalData = sortedUnique;
+          if (sortedUnique.length > MAX_BUFFER) {
+            removedFromLeft = sortedUnique.length - MAX_BUFFER;
+            finalData = sortedUnique.slice(removedFromLeft);
             pag.hasMoreHistory = true;
           }
 

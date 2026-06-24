@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   startReplay, 
   pauseReplay, 
@@ -52,9 +52,9 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const [slPrice, setSlPrice] = useState<number>(0);
   const [tpEnabled, setTpEnabled] = useState(false);
   const [tpPrice, setTpPrice] = useState<number>(0);
+  const [orderDraftKey, setOrderDraftKey] = useState(0);
 
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
-  const [barsHistory, setBarsHistory] = useState<any[]>([]);
 
   // Auto Scroll Refs
   const tradeLogEndRef = useRef<HTMLDivElement>(null);
@@ -173,9 +173,6 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
           setSpeed(res.session.speed);
           setCurrentTime(res.session.current_time);
           setSessionState(res.session);
-          if (res.session.current_bar) {
-            setBarsHistory([res.session.current_bar]);
-          }
           if (res.session.calculate_indicators !== undefined) {
             setCalculateIndicators(res.session.calculate_indicators);
           }
@@ -200,20 +197,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
           setCalculateIndicators(session_state.calculate_indicators);
         }
 
-        if (session_state.current_bar) {
-          const bar = session_state.current_bar;
-          setBarsHistory((prev) => {
-            if (prev.length === 0 || prev[prev.length - 1].time !== bar.time) {
-              const next = [...prev, bar];
-              if (next.length > 5) next.shift();
-              return next;
-            } else {
-              const next = [...prev];
-              next[next.length - 1] = bar;
-              return next;
-            }
-          });
-        }
+        // current_bar updated
         
         if (session_state.status === 'ended') {
           // Automatically fetch scorecard on completion
@@ -229,6 +213,16 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   useEffect(() => {
     tradeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessionState?.trade_history]);
+
+  // Reset presets on instrument or active session change
+  useEffect(() => {
+    setPresetEnabled(false);
+    setPresetEntryPrice(0);
+    setSlEnabled(false);
+    setSlPrice(0);
+    setTpEnabled(false);
+    setTpPrice(0);
+  }, [instrument, isActive]);
 
   const handleStart = async () => {
     setErrorMsg(null);
@@ -313,19 +307,13 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
 
   const currentClosePrice = sessionState?.current_bar?.close || 0;
 
-  const getCandleHighLow = () => {
-    if (barsHistory.length >= 2) {
-      const b0 = barsHistory[barsHistory.length - 1];
-      const b1 = barsHistory[barsHistory.length - 2];
-      return {
-        lowestLow: Math.min(b0.low, b1.low),
-        highestHigh: Math.max(b0.high, b1.high),
-      };
-    }
-    const close = sessionState?.current_bar?.close || 0;
+  const getDefaults = (side: 'buy' | 'sell', entry: number) => {
+    // 0.2% for SL, 0.6% for TP (1:3 ratio)
+    const slOffset = entry * 0.002;
+    const tpOffset = entry * 0.006;
     return {
-      lowestLow: close * 0.995,
-      highestHigh: close * 1.005,
+      sl: side === 'buy' ? entry - slOffset : entry + slOffset,
+      tp: side === 'buy' ? entry + tpOffset : entry - tpOffset,
     };
   };
 
@@ -339,32 +327,30 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const handleToggleSL = (enabled: boolean) => {
     setSlEnabled(enabled);
     if (enabled) {
-      const { lowestLow, highestHigh } = getCandleHighLow();
-      setSlPrice(orderSide === 'buy' ? lowestLow : highestHigh);
+      const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
+      const { sl } = getDefaults(orderSide, entry);
+      setSlPrice(sl);
     }
   };
 
   const handleToggleTP = (enabled: boolean) => {
     setTpEnabled(enabled);
     if (enabled) {
-      const { lowestLow, highestHigh } = getCandleHighLow();
-      setTpPrice(orderSide === 'buy' ? highestHigh : lowestLow);
+      const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
+      const { tp } = getDefaults(orderSide, entry);
+      setTpPrice(tp);
     }
   };
 
   const handleToggleSide = (side: 'buy' | 'sell') => {
     setOrderSide(side);
-    const { lowestLow, highestHigh } = getCandleHighLow();
-    if (side === 'buy') {
-      if (slEnabled) setSlPrice(lowestLow);
-      if (tpEnabled) setTpPrice(highestHigh);
-    } else {
-      if (slEnabled) setSlPrice(highestHigh);
-      if (tpEnabled) setTpPrice(lowestLow);
-    }
+    const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
+    const { sl, tp } = getDefaults(side, entry);
+    if (slEnabled) setSlPrice(sl);
+    if (tpEnabled) setTpPrice(tp);
   };
 
-  const handlePositionSelect = (pos: { entry: number; sl: number; tp: number } | null) => {
+  const handlePositionSelect = useCallback((pos: { entry: number; sl: number; tp: number } | null) => {
     if (pos) {
       setPresetEnabled(true);
       setPresetEntryPrice(pos.entry);
@@ -373,7 +359,17 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
       setTpEnabled(true);
       setTpPrice(pos.tp);
     }
-  };
+  }, []);
+
+  const clearOrderDraft = useCallback(() => {
+    setPresetEnabled(false);
+    setPresetEntryPrice(0);
+    setSlEnabled(false);
+    setSlPrice(0);
+    setTpEnabled(false);
+    setTpPrice(0);
+    setOrderDraftKey((k) => k + 1);
+  }, []);
 
   const handleBuy = async () => {
     setErrorMsg(null);
@@ -385,6 +381,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
       const res = await placeManualOrder('buy', orderSize, entry, sl, tp);
       if (res.status === 'success') {
         setSuccessMsg(`Market BUY ${orderSize} lots filled at ${res.order.filled_price}`);
+        clearOrderDraft();
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to execute Buy order.');
@@ -401,6 +398,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
       const res = await placeManualOrder('sell', orderSize, entry, sl, tp);
       if (res.status === 'success') {
         setSuccessMsg(`Market SELL ${orderSize} lots filled at ${res.order.filled_price}`);
+        clearOrderDraft();
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to execute Sell order.');
@@ -565,6 +563,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
               onUpdateEntryPrice={setPresetEntryPrice}
               onUpdateSLPrice={setSlPrice}
               onUpdateTPPrice={setTpPrice}
+              orderDraftKey={orderDraftKey}
             />
           </div>
         </div>
@@ -611,6 +610,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
                 onToggleTP={handleToggleTP}
                 orderSide={orderSide}
                 onToggleSide={handleToggleSide}
+                currentClosePrice={currentClosePrice}
               />
             </div>
 

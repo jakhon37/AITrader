@@ -16,6 +16,8 @@ interface Props {
   onUpdateEntryPrice?: (price: number) => void;
   onUpdateSLPrice?: (price: number) => void;
   onUpdateTPPrice?: (price: number) => void;
+  /** Increment to clear position-tool drafts from the chart after order execution. */
+  orderDraftKey?: number;
 }
 
 export function CandleChart({
@@ -30,6 +32,7 @@ export function CandleChart({
   onUpdateEntryPrice,
   onUpdateSLPrice,
   onUpdateTPPrice,
+  orderDraftKey = 0,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeTool, setActiveTool] = useState<'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci'>('select');
@@ -187,74 +190,12 @@ export function CandleChart({
     virtualEndTime,
   });
 
-  // Manage Order Preset Lines on the chart
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const entryLineRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const slLineRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tpLineRef = useRef<any>(null);
-
+  // Clear position-tool drawings when parent signals order draft was executed
   useEffect(() => {
-    if (!candleSeries) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updateLine = (ref: { current: any }, price: number | null | undefined, options: any) => {
-      if (ref.current) {
-        try {
-          candleSeries.removePriceLine(ref.current);
-        } catch (err) {
-          void err;
-        }
-        ref.current = null;
-      }
-      if (price !== null && price !== undefined && price > 0) {
-        ref.current = candleSeries.createPriceLine({
-          price,
-          ...options,
-        });
-      }
-    };
-
-    updateLine(entryLineRef, entryLinePrice, {
-      color: '#2979ff',
-      lineWidth: 2,
-      lineStyle: 1, // 1 = Dashed
-      axisLabelVisible: true,
-      title: 'Limit Entry',
-    });
-
-    updateLine(slLineRef, slLinePrice, {
-      color: '#ff1744',
-      lineWidth: 2,
-      lineStyle: 1, // Dashed
-      axisLabelVisible: true,
-      title: 'Stop Loss',
-    });
-
-    updateLine(tpLineRef, tpLinePrice, {
-      color: '#00e676',
-      lineWidth: 2,
-      lineStyle: 1, // Dashed
-      axisLabelVisible: true,
-      title: 'Take Profit',
-    });
-
-    return () => {
-      if (entryLineRef.current) {
-        try { candleSeries.removePriceLine(entryLineRef.current); } catch (err) { void err; }
-        entryLineRef.current = null;
-      }
-      if (slLineRef.current) {
-        try { candleSeries.removePriceLine(slLineRef.current); } catch (err) { void err; }
-        slLineRef.current = null;
-      }
-      if (tpLineRef.current) {
-        try { candleSeries.removePriceLine(tpLineRef.current); } catch (err) { void err; }
-        tpLineRef.current = null;
-      }
-    };
-  }, [candleSeries, entryLinePrice, slLinePrice, tpLinePrice]);
+    if (orderDraftKey === 0) return;
+    setDrawings((prev) => prev.filter((d) => d.type !== 'position'));
+    setSelectedDrawingId(null);
+  }, [orderDraftKey]);
 
   // Trigger onPositionSelect callback when active position drawing is selected or modified
   useEffect(() => {

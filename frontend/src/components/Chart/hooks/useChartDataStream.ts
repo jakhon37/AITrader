@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../../../api/client';
 import { LOOKBACK, MAX_BUFFER, findClosestIndex, isTradingBar } from '../utils';
@@ -45,6 +45,12 @@ export function useChartDataStream(
     hasMoreHistory: true,
     hasNewerHistory: false,
   });
+
+  // Keep stable refs to the series so updateBar never becomes stale
+  const candleSeriesRef = useRef(candleSeries);
+  const volumeSeriesRef = useRef(volumeSeries);
+  useEffect(() => { candleSeriesRef.current = candleSeries; }, [candleSeries]);
+  useEffect(() => { volumeSeriesRef.current = volumeSeries; }, [volumeSeries]);
 
   const [reloadKey, setReloadKey] = useState(0);
   const prevVirtualEndTimeRef = useRef<string | undefined>(virtualEndTime);
@@ -127,11 +133,18 @@ export function useChartDataStream(
             return;
           }
 
-          if (filtered.length > MAX_BUFFER) {
-            dataRef.current = filtered.slice(filtered.length - MAX_BUFFER);
+          // Deduplicate and sort ascending by time
+          const uniqueMap = new Map<number, any>();
+          for (const item of filtered) {
+            uniqueMap.set(item.time, item);
+          }
+          const sortedUnique = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+
+          if (sortedUnique.length > MAX_BUFFER) {
+            dataRef.current = sortedUnique.slice(sortedUnique.length - MAX_BUFFER);
             paginationRef.current.hasMoreHistory = true;
           } else {
-            dataRef.current = filtered;
+            dataRef.current = sortedUnique;
           }
 
           candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
@@ -188,48 +201,77 @@ export function useChartDataStream(
     };
   }, [chart, candleSeries, volumeSeries, instrument, timeframe, reloadKey]);
 
-  // 2. Active updating bar closure
-  const updateBar = (bar: any) => {
-    if (!candleSeries || !volumeSeries) return;
+  // 2. Active updating bar closure — stable via useCallback + series refs
+  const updateBar = useCallback((bar: any) => {
+    const cs = candleSeriesRef.current;
+    const vs = volumeSeriesRef.current;
+    if (!cs || !vs) return;
     if (!isTradingBar(bar)) return;
+
+    // Guarantee time is a plain integer Unix seconds (never an object)
+    const barTime = typeof bar.time === 'number' ? bar.time : Number(bar.time);
+    if (!Number.isFinite(barTime) || barTime <= 0) return;
 
     const pag = paginationRef.current;
 
-    if (pag.hasNewerHistory) {
-      const idx = dataRef.current.findIndex((d) => d.time === bar.time);
-      if (idx !== -1) {
-        dataRef.current[idx] = bar;
-        candleSeries.update({ time: bar.time as Time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
-        volumeSeries.update({
-          time: bar.time as Time,
-          value: bar.volume,
-          color: bar.close >= bar.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
-        });
-      }
-      return;
+    // During replay, reject live-scheduler bars that leaked in with timestamps
+    // beyond the simulation clock — they become the series "last" bar and freeze
+    // the price-line indicator.
+    if (virtualEndTimeRef.current) {
+      const replayEndSec = Math.floor(new Date(virtualEndTimeRef.current).getTime() / 1000);
+      const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
+      if (barTime > replayEndSec + tfSec) return;
     }
 
-    candleSeries.update({ time: bar.time as Time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
-    volumeSeries.update({
-      time: bar.time as Time,
-      value: bar.volume,
-      color: bar.close >= bar.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
-    });
+    const lastBar = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1] : null;
+    const isUpdateLastOrNew = !lastBar || barTime >= lastBar.time;
 
-    const idx = dataRef.current.findIndex((d) => d.time === bar.time);
+    const idx = dataRef.current.findIndex((d) => d.time === barTime);
     if (idx !== -1) {
-      dataRef.current[idx] = bar;
+      dataRef.current[idx] = { ...bar, time: barTime };
     } else {
-      dataRef.current.push(bar);
+      dataRef.current.push({ ...bar, time: barTime });
       dataRef.current.sort((a, b) => a.time - b.time);
       if (dataRef.current.length > MAX_BUFFER) {
         dataRef.current = dataRef.current.slice(dataRef.current.length - MAX_BUFFER);
         pag.hasMoreHistory = true;
-        candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
-        volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
       }
     }
-  };
+
+    const lastIdx = dataRef.current.length - 1;
+    const touchesLastBar = idx === -1 ? barTime >= (dataRef.current[lastIdx]?.time ?? 0) : idx === lastIdx;
+
+    const candleData = dataRef.current.map((d) => ({
+      time: d.time as Time,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+    }));
+    const volumeData = dataRef.current.map((d) => ({
+      time: d.time as Time,
+      value: d.volume ?? 0,
+      color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
+    }));
+
+    const applySetData = () => {
+      cs.setData(candleData);
+      vs.setData(volumeData);
+    };
+
+    if (touchesLastBar && isUpdateLastOrNew && !pag.hasNewerHistory) {
+      try {
+        cs.update({ time: barTime as Time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+        vs.update({ time: barTime as Time, value: bar.volume, color: bar.close >= bar.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' });
+      } catch {
+        applySetData();
+      }
+    } else {
+      try {
+        applySetData();
+      } catch { /* ignore */ }
+    }
+  }, [timeframe]); // timeframe for replay bar-time guard
 
   // 3. Mount Scroll Pagination Hook
   useChartScrolling({
@@ -249,5 +291,6 @@ export function useChartDataStream(
     timeframe,
     onNewBar,
     updateBar,
+    virtualEndTimeRef,
   });
 }

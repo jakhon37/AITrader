@@ -193,9 +193,12 @@ async def get_ohlcv(
     except Exception as exc:
         logger.exception(f"Failed during fill_data_gaps check: {exc}")
 
-    # Register the pair with the DataScheduler for live streaming
+    # Register for live streaming only outside an active replay session.
+    # Replay charts fetch history repeatedly; activating the scheduler injects
+    # real-time bars that freeze the chart price-line indicator.
     scheduler = getattr(request.app.state, "scheduler", None)
-    if scheduler:
+    replay_active = getattr(request.app.state, "active_replay_session", None) is not None
+    if scheduler and not replay_active:
         scheduler.add_active_pair(inst, tf)
 
     try:

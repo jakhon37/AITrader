@@ -18,6 +18,8 @@ interface Props {
   rangeChangeKey: number;
   mapPixelsToPoint: (clientX: number, clientY: number) => Point | null;
   mapPointToPixels: (pt: Point) => { x: number | null; y: number | null };
+  mapPixelToPrice: (clientY: number) => number | null;
+  mapPriceToY: (price: number) => number | null;
   currentExtendRight?: boolean;
   currentFibLevels?: number[];
   entryLinePrice?: number | null;
@@ -44,6 +46,8 @@ export function useDrawingInteractions({
   rangeChangeKey,
   mapPixelsToPoint,
   mapPointToPixels,
+  mapPixelToPrice,
+  mapPriceToY,
   currentExtendRight = false,
   currentFibLevels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.618, 2.618, 3.618, 4.236],
   entryLinePrice,
@@ -63,13 +67,13 @@ export function useDrawingInteractions({
 
   const getOrderLinesY = () => {
     const entryY = (entryLinePrice !== null && entryLinePrice !== undefined)
-      ? mapPointToPixels({ time: 0, price: entryLinePrice }).y
+      ? mapPriceToY(entryLinePrice)
       : null;
     const slY = (slLinePrice !== null && slLinePrice !== undefined)
-      ? mapPointToPixels({ time: 0, price: slLinePrice }).y
+      ? mapPriceToY(slLinePrice)
       : null;
     const tpY = (tpLinePrice !== null && tpLinePrice !== undefined)
-      ? mapPointToPixels({ time: 0, price: tpLinePrice }).y
+      ? mapPriceToY(tpLinePrice)
       : null;
     return { entryY, slY, tpY };
   };
@@ -195,7 +199,24 @@ export function useDrawingInteractions({
     }
   };
 
+  const updateOrderLinePrice = (lineId: string, clientY: number) => {
+    const price = mapPixelToPrice(clientY);
+    if (price === null) return;
+    if (lineId === 'entry' && onUpdateEntryPrice) {
+      onUpdateEntryPrice(price);
+    } else if (lineId === 'sl' && onUpdateSLPrice) {
+      onUpdateSLPrice(price);
+    } else if (lineId === 'tp' && onUpdateTPPrice) {
+      onUpdateTPPrice(price);
+    }
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (activeTool === 'select' && dragState?.type === 'order_line') {
+      updateOrderLinePrice(dragState.drawingId, e.clientY);
+      return;
+    }
+
     const pt = mapPixelsToPoint(e.clientX, e.clientY);
     if (!pt) return;
 
@@ -203,21 +224,6 @@ export function useDrawingInteractions({
 
     if (activeTool === 'select') {
       if (dragState) {
-        if (dragState.type === 'order_line') {
-          const clickPt = mapPixelsToPoint(e.clientX, e.clientY);
-          if (clickPt) {
-            const price = clickPt.price;
-            if (dragState.drawingId === 'entry' && onUpdateEntryPrice) {
-              onUpdateEntryPrice(price);
-            } else if (dragState.drawingId === 'sl' && onUpdateSLPrice) {
-              onUpdateSLPrice(price);
-            } else if (dragState.drawingId === 'tp' && onUpdateTPPrice) {
-              onUpdateTPPrice(price);
-            }
-          }
-          return;
-        }
-
         if (dragState.type === 'handle' && dragState.pointIndex !== undefined) {
           setDrawings((prev) =>
             prev.map((d) => {
@@ -385,7 +391,11 @@ export function useDrawingInteractions({
       const y = e.clientY - rect.top;
 
       const nearOrderLine = checkNearOrderLine(y);
-      if (nearOrderLine) return; // do not deselect drawings when clicking order lines
+      if (nearOrderLine) {
+        setDragState({ type: 'order_line', drawingId: nearOrderLine });
+        e.preventDefault();
+        return;
+      }
 
       const hoveredId = findDrawingUnderCursor(x, y, drawings, mapPointToPixels, canvasRef.current?.width || 0);
       const nearHandle = isNearAnyHandle(x, y, selectedDrawingId, drawings, mapPointToPixels);
@@ -401,7 +411,25 @@ export function useDrawingInteractions({
       container.removeEventListener('mousemove', handleContainerMouseMove, true);
       container.removeEventListener('mousedown', handleContainerMouseDown, true);
     };
-  }, [containerRef, activeTool, drawings, rangeChangeKey, setSelectedDrawingId, selectedDrawingId, mapPointToPixels, canvasRef, entryLinePrice, slLinePrice, tpLinePrice]);
+  }, [containerRef, activeTool, drawings, rangeChangeKey, setSelectedDrawingId, selectedDrawingId, mapPointToPixels, mapPriceToY, canvasRef, entryLinePrice, slLinePrice, tpLinePrice]);
+
+  // Track order-line drags at window level so vertical moves work even when the
+  // overlay canvas has pointer-events:none or the cursor crosses the price axis.
+  useEffect(() => {
+    if (dragState?.type !== 'order_line') return;
+
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      updateOrderLinePrice(dragState.drawingId, e.clientY);
+    };
+    const handleWindowMouseUp = () => setDragState(null);
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [dragState, mapPixelToPrice, onUpdateEntryPrice, onUpdateSLPrice, onUpdateTPPrice]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

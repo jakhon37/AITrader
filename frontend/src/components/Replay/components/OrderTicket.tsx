@@ -28,6 +28,7 @@ interface OrderTicketProps {
 
   orderSide: 'buy' | 'sell';
   onToggleSide: (side: 'buy' | 'sell') => void;
+  currentClosePrice: number;
 }
 
 export function OrderTicket({
@@ -58,7 +59,27 @@ export function OrderTicket({
 
   orderSide,
   onToggleSide,
+  currentClosePrice,
 }: OrderTicketProps) {
+  const entryPrice = presetEnabled ? presetEntryPrice : currentClosePrice;
+
+  // Potential loss calculation
+  let estLoss = 0;
+  let lossPct = 0;
+  if (slEnabled && entryPrice > 0) {
+    const diff = orderSide === 'buy' ? (entryPrice - slPrice) : (slPrice - entryPrice);
+    estLoss = diff * orderSize * 100000;
+    lossPct = (diff / entryPrice) * 100;
+  }
+
+  // Potential profit calculation
+  let estProfit = 0;
+  let profitPct = 0;
+  if (tpEnabled && entryPrice > 0) {
+    const diff = orderSide === 'buy' ? (tpPrice - entryPrice) : (entryPrice - tpPrice);
+    estProfit = diff * orderSize * 100000;
+    profitPct = (diff / entryPrice) * 100;
+  }
   return (
     <div
       className="glass-panel"
@@ -209,64 +230,78 @@ export function OrderTicket({
                 </div>
 
                 {/* Stop Loss */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={slEnabled}
-                      onChange={(e) => onToggleSL(e.target.checked)}
-                      style={{ accentColor: 'var(--neon-red)', cursor: 'pointer' }}
-                    />
-                    Stop Loss (SL)
-                  </label>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={slEnabled}
+                        onChange={(e) => onToggleSL(e.target.checked)}
+                        style={{ accentColor: 'var(--neon-red)', cursor: 'pointer' }}
+                      />
+                      Stop Loss (SL)
+                    </label>
+                    {slEnabled && (
+                      <input
+                        type="number"
+                        step="0.00001"
+                        value={slPrice}
+                        onChange={(e) => setSlPrice(Number(e.target.value))}
+                        style={{
+                          width: '100px',
+                          background: '#111827',
+                          border: '1px solid var(--border-glow)',
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          color: '#fff',
+                          fontSize: '11px',
+                          textAlign: 'right',
+                        }}
+                      />
+                    )}
+                  </div>
                   {slEnabled && (
-                    <input
-                      type="number"
-                      step="0.00001"
-                      value={slPrice}
-                      onChange={(e) => setSlPrice(Number(e.target.value))}
-                      style={{
-                        width: '100px',
-                        background: '#111827',
-                        border: '1px solid var(--border-glow)',
-                        padding: '4px 8px',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: '11px',
-                        textAlign: 'right',
-                      }}
-                    />
+                    <div style={{ fontSize: '10px', color: '#ff1744', marginTop: '2px', paddingLeft: '20px', fontWeight: 600 }}>
+                      Est. Loss: -${estLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (-{lossPct.toFixed(2)}%)
+                    </div>
                   )}
                 </div>
 
                 {/* Take Profit */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={tpEnabled}
-                      onChange={(e) => onToggleTP(e.target.checked)}
-                      style={{ accentColor: 'var(--neon-green)', cursor: 'pointer' }}
-                    />
-                    Take Profit (TP)
-                  </label>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={tpEnabled}
+                        onChange={(e) => onToggleTP(e.target.checked)}
+                        style={{ accentColor: 'var(--neon-green)', cursor: 'pointer' }}
+                      />
+                      Take Profit (TP)
+                    </label>
+                    {tpEnabled && (
+                      <input
+                        type="number"
+                        step="0.00001"
+                        value={tpPrice}
+                        onChange={(e) => setTpPrice(Number(e.target.value))}
+                        style={{
+                          width: '100px',
+                          background: '#111827',
+                          border: '1px solid var(--border-glow)',
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          color: '#fff',
+                          fontSize: '11px',
+                          textAlign: 'right',
+                        }}
+                      />
+                    )}
+                  </div>
                   {tpEnabled && (
-                    <input
-                      type="number"
-                      step="0.00001"
-                      value={tpPrice}
-                      onChange={(e) => setTpPrice(Number(e.target.value))}
-                      style={{
-                        width: '100px',
-                        background: '#111827',
-                        border: '1px solid var(--border-glow)',
-                        padding: '4px 8px',
-                        borderRadius: 4,
-                        color: '#fff',
-                        fontSize: '11px',
-                        textAlign: 'right',
-                      }}
-                    />
+                    <div style={{ fontSize: '10px', color: '#00e676', marginTop: '2px', paddingLeft: '20px', fontWeight: 600 }}>
+                      Est. Profit: +${estProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (+{profitPct.toFixed(2)}%)
+                    </div>
                   )}
                 </div>
               </div>

@@ -35,6 +35,8 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
       color: '#00e5ff',
       priceFormat: { type: 'volume' },
       priceScaleId: '',
+      lastValueVisible: false,
+      priceLineVisible: false,
     });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 

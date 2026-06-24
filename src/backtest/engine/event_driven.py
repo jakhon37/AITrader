@@ -65,6 +65,7 @@ class MockExecutionEngine:
         self.balance = initial_capital
         self.equity = initial_capital
         self.positions: dict[Instrument, dict[str, Any]] = {}
+        self.pending_orders: list[dict[str, Any]] = []
         self.trade_history: list[Trade] = []
         self.equity_history: list[tuple[datetime, float]] = []
 
@@ -79,9 +80,57 @@ class MockExecutionEngine:
     async def on_ohlcv_bar(self, payload: OHLCVBar) -> None:
         instrument = payload.instrument
         close = payload.close
+        high = payload.high
+        low = payload.low
         timestamp = payload.timestamp
 
-        # 1. Update current price and check SL/TP for open position
+        # Track latest prices
+        if not hasattr(self, "latest_prices"):
+            self.latest_prices = {}
+        prev_close = self.latest_prices.get(instrument, close)
+        self.latest_prices[instrument] = close
+
+        # 1. Process pending limit/stop orders
+        triggered_indices = []
+        for i, order in enumerate(self.pending_orders):
+            if order["instrument"] != instrument:
+                continue
+
+            entry_price = order["entry_price"]
+            side = order["side"]
+
+            # Determine trigger condition (candle touch or gap cross)
+            triggered = False
+            if low <= entry_price <= high:
+                triggered = True
+            elif (prev_close <= entry_price <= close) or (prev_close >= entry_price >= close):
+                triggered = True
+
+            if triggered:
+                # Close opposite position if exists
+                if instrument in self.positions:
+                    await self._close_position(instrument, entry_price, timestamp)
+
+                # Execute order
+                slippage_val = 0.00005
+                fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
+
+                self.positions[instrument] = {
+                    "side": side,
+                    "size": order["size"],
+                    "entry_price": fill_price,
+                    "current_price": close,
+                    "sl": order["sl"],
+                    "tp": order["tp"],
+                    "entry_time": timestamp,
+                }
+                logger.info(f"Pending limit order triggered for {instrument.value} at {fill_price}")
+                triggered_indices.append(i)
+
+        for idx in sorted(triggered_indices, reverse=True):
+            self.pending_orders.pop(idx)
+
+        # 2. Update current price and check SL/TP for open position
         if instrument in self.positions:
             pos = self.positions[instrument]
             pos["current_price"] = close
@@ -93,24 +142,24 @@ class MockExecutionEngine:
             exit_price = close
 
             if side == OrderSide.BUY:
-                if sl is not None and close <= sl:
+                if sl is not None and low <= sl:
                     should_close = True
                     exit_price = sl
-                elif tp is not None and close >= tp:
+                elif tp is not None and high >= tp:
                     should_close = True
                     exit_price = tp
             elif side == OrderSide.SELL:
-                if sl is not None and close >= sl:
+                if sl is not None and high >= sl:
                     should_close = True
                     exit_price = sl
-                elif tp is not None and close <= tp:
+                elif tp is not None and low <= tp:
                     should_close = True
                     exit_price = tp
 
             if should_close:
                 await self._close_position(instrument, exit_price, timestamp)
 
-        # 2. Record daily/hourly equity curve value
+        # 3. Record daily/hourly equity curve value
         unrealized_pnl = 0.0
         for pos in self.positions.values():
             unrealized_pnl += self._calculate_pnl(pos)
@@ -127,28 +176,72 @@ class MockExecutionEngine:
         if side is None:
             if instrument in self.positions:
                 await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
+            # Also clear pending orders on neutral signal
+            self.pending_orders = [o for o in self.pending_orders if o["instrument"] != instrument]
             return
 
-        # Close opposite position if exists
-        if instrument in self.positions:
-            existing = self.positions[instrument]
-            if existing["side"] != side:
-                await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
-            else:
-                # Already holding this direction
-                return
+        # Close opposite position if exists (only for immediate orders; pending limit orders will close opposite on trigger)
+        is_lim = getattr(payload, "is_limit", False)
+        if not is_lim:
+            if instrument in self.positions:
+                existing = self.positions[instrument]
+                if existing["side"] != side:
+                    await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
+                else:
+                    # Already holding this direction
+                    return
 
-        # Open new position (default: 0.1 lots = 10,000 units for Forex)
+        # Standard Forex lot sizes: 1 lot = 100,000 units
         entry_price = payload.suggested_entry or 0.0
         if entry_price == 0.0:
+            return
+
+        size_lots = payload.suggested_size if payload.suggested_size is not None else 0.1
+        unit_size = size_lots * 100000.0
+
+        if is_lim:
+            # If the current price has already reached/crossed the limit, execute immediately.
+            # Otherwise, queue as a pending order.
+            latest_price = getattr(self, "latest_prices", {}).get(instrument, None)
+            if latest_price is not None:
+                triggered = False
+                if side == OrderSide.BUY and latest_price <= entry_price:
+                    triggered = True
+                elif side == OrderSide.SELL and latest_price >= entry_price:
+                    triggered = True
+
+                if triggered:
+                    if instrument in self.positions:
+                        await self._close_position(instrument, entry_price, timestamp)
+                    slippage_val = 0.00005
+                    fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
+                    self.positions[instrument] = {
+                        "side": side,
+                        "size": unit_size,
+                        "entry_price": fill_price,
+                        "current_price": latest_price,
+                        "sl": payload.suggested_sl,
+                        "tp": payload.suggested_tp,
+                        "entry_time": timestamp,
+                    }
+                    logger.info(f"Limit order filled immediately at {fill_price}")
+                    return
+
+            self.pending_orders.append({
+                "instrument": instrument,
+                "side": side,
+                "size": unit_size,
+                "entry_price": entry_price,
+                "sl": payload.suggested_sl,
+                "tp": payload.suggested_tp,
+                "timestamp": timestamp,
+            })
+            logger.info(f"Pending limit order queued for {instrument.value} at {entry_price}")
             return
 
         # Apply slippage (0.5 pip = 0.00005)
         slippage_val = 0.00005
         fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
-
-        # Standard Forex lot sizes
-        unit_size = 10000.0  # 0.1 lot
 
         self.positions[instrument] = {
             "side": side,

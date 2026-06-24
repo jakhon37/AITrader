@@ -229,6 +229,7 @@ class TradeSignal(BaseModel):
     narrative:          Optional[str]
     sources:            SignalSource
     model_version:      Optional[str]             # which D09 model produced this
+    is_limit:           bool = False              # whether this is a limit entry order
 
 
 # ── Execution Types ───────────────────────────────────────────────────────────
