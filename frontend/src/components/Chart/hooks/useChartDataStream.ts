@@ -34,6 +34,12 @@ export function useChartDataStream(
   const { instrument, timeframe, onNewBar, virtualEndTime, viewportMode = 'auto' } = options;
 
   const dataRef = useRef<any[]>([]);
+  const barTimesRef = useRef<number[]>([]);
+
+  const syncBarTimes = () => {
+    barTimesRef.current = dataRef.current.map((d) => d.time);
+  };
+
   const paginationRef = useRef({
     isFetching: false,
     hasMoreHistory: true,
@@ -132,6 +138,7 @@ export function useChartDataStream(
             dataRef.current = sortedUnique;
           }
 
+          syncBarTimes();
           candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
           volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
 
@@ -210,6 +217,7 @@ export function useChartDataStream(
     }));
 
     const applySetData = () => {
+      syncBarTimes();
       cs.setData(candleData);
       vs.setData(volumeData);
     };
@@ -237,6 +245,7 @@ export function useChartDataStream(
     timeframe,
     virtualEndTimeRef,
     dataRef,
+    syncBarTimes,
     paginationRef,
   });
 
@@ -248,4 +257,6 @@ export function useChartDataStream(
     updateBar,
     virtualEndTimeRef,
   });
+
+  return { barTimesRef };
 }

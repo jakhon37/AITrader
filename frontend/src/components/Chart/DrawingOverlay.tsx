@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { Drawing } from './drawingTypes';
 import { getSettingsMenuPosition } from './drawingUtils';
@@ -36,6 +36,7 @@ interface DrawingOverlayProps {
   onUpdateTPPrice?: (price: number) => void;
   layoutKey?: number;
   onPositionInteractionChange?: (active: boolean) => void;
+  barTimesRef: MutableRefObject<number[]>;
 }
 
 export function DrawingOverlay({
@@ -68,6 +69,7 @@ export function DrawingOverlay({
   onUpdateTPPrice,
   layoutKey = 0,
   onPositionInteractionChange,
+  barTimesRef,
 }: DrawingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
@@ -81,7 +83,8 @@ export function DrawingOverlay({
     chart,
     candleSeries,
     containerRef,
-    canvasRef
+    canvasRef,
+    barTimesRef,
   );
 
   // Subscribe to chart zoom / scroll to repaint the canvas
@@ -137,6 +140,7 @@ export function DrawingOverlay({
     onUpdateEntryPrice,
     onUpdateSLPrice,
     onUpdateTPPrice,
+    barTimesRef,
   });
 
   const positionInteracting = useMemo(() => {

@@ -12,6 +12,7 @@ interface ScrollingHookOptions {
   timeframe: string;
   virtualEndTimeRef: MutableRefObject<string | undefined>;
   dataRef: MutableRefObject<any[]>;
+  syncBarTimes?: () => void;
   paginationRef: MutableRefObject<{
     isFetching: boolean;
     hasMoreHistory: boolean;
@@ -27,6 +28,7 @@ export function useChartScrolling({
   timeframe,
   virtualEndTimeRef,
   dataRef,
+  syncBarTimes,
   paginationRef,
 }: ScrollingHookOptions) {
   useEffect(() => {
@@ -78,6 +80,7 @@ export function useChartScrolling({
           }
 
           dataRef.current = finalData;
+          syncBarTimes?.();
 
           const currentVisibleRange = chart.timeScale().getVisibleLogicalRange();
           const addedBarsCount = finalData.filter((d) => d.time < oldestTime).length;
@@ -143,6 +146,7 @@ export function useChartScrolling({
           }
 
           dataRef.current = finalData;
+          syncBarTimes?.();
 
           const currentVisibleRange = chart.timeScale().getVisibleLogicalRange();
 

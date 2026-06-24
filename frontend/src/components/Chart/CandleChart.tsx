@@ -219,7 +219,7 @@ export function CandleChart({
   });
 
   // Custom hook to handle initial fetch, pagination, window scroll events, and websocket/replay feeds
-  useChartDataStream(chart, candleSeries, volumeSeries, {
+  const { barTimesRef } = useChartDataStream(chart, candleSeries, volumeSeries, {
     instrument,
     timeframe,
     onNewBar,
@@ -356,6 +356,7 @@ export function CandleChart({
             onUpdateTPPrice={onUpdateTPPrice}
             layoutKey={layoutKey}
             onPositionInteractionChange={handlePositionInteractionChange}
+            barTimesRef={barTimesRef}
           />
         )}
       </div>

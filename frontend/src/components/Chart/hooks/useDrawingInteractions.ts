@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MutableRefObject } from 'react';
 import type { Point, Drawing, DragState } from '../drawingTypes';
 import { findDrawingUnderCursor, isNearAnyHandle } from '../drawingUtils';
+import { findClosestBarIndex } from '../utils';
 
 interface Props {
   activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci';
@@ -28,6 +29,7 @@ interface Props {
   onUpdateEntryPrice?: (price: number) => void;
   onUpdateSLPrice?: (price: number) => void;
   onUpdateTPPrice?: (price: number) => void;
+  barTimesRef: MutableRefObject<number[]>;
 }
 
 export function useDrawingInteractions({
@@ -56,6 +58,7 @@ export function useDrawingInteractions({
   onUpdateEntryPrice,
   onUpdateSLPrice,
   onUpdateTPPrice,
+  barTimesRef,
 }: Props) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [tempPoints, setTempPoints] = useState<Point[]>([]);
@@ -244,15 +247,29 @@ export function useDrawingInteractions({
           );
         } else if (dragState.type === 'body' && dragState.startMousePoint && dragState.startDrawingPoints) {
           const deltaPrice = pt.price - dragState.startMousePoint.price;
-          const deltaTime = pt.time - dragState.startMousePoint.time;
+          const barTimes = barTimesRef.current;
 
           setDrawings((prev) =>
             prev.map((d) => {
               if (d.id === dragState.drawingId) {
-                const newPoints = dragState.startDrawingPoints!.map((origPt) => ({
-                  time: origPt.time + deltaTime,
-                  price: origPt.price + deltaPrice,
-                }));
+                const newPoints = dragState.startDrawingPoints!.map((origPt) => {
+                  if (barTimes.length > 0) {
+                    const startIdx = findClosestBarIndex(barTimes, dragState.startMousePoint!.time);
+                    const currentIdx = findClosestBarIndex(barTimes, pt.time);
+                    const deltaIdx = currentIdx - startIdx;
+                    const origIdx = findClosestBarIndex(barTimes, origPt.time);
+                    const newIdx = Math.max(0, Math.min(barTimes.length - 1, origIdx + deltaIdx));
+                    return {
+                      time: barTimes[newIdx],
+                      price: origPt.price + deltaPrice,
+                    };
+                  }
+                  const deltaTime = pt.time - dragState.startMousePoint!.time;
+                  return {
+                    time: origPt.time + deltaTime,
+                    price: origPt.price + deltaPrice,
+                  };
+                });
                 return { ...d, points: newPoints };
               }
               return d;

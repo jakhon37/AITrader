@@ -170,6 +170,39 @@ export const findClosestIndex = (data: { time: number }[], targetTime: number): 
   return closestIdx;
 };
 
+/** Nearest bar index for a unix timestamp against sorted bar times. */
+export const findClosestBarIndex = (barTimes: readonly number[], targetTime: number): number => {
+  if (barTimes.length === 0) return -1;
+  if (targetTime <= barTimes[0]) return 0;
+  if (targetTime >= barTimes[barTimes.length - 1]) return barTimes.length - 1;
+
+  let lo = 0;
+  let hi = barTimes.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (barTimes[mid] === targetTime) return mid;
+    if (barTimes[mid] < targetTime) lo = mid + 1;
+    else hi = mid - 1;
+  }
+
+  if (lo <= 0) return 0;
+  if (lo >= barTimes.length) return barTimes.length - 1;
+  const diffLo = Math.abs(barTimes[lo] - targetTime);
+  const diffHi = Math.abs(barTimes[lo - 1] - targetTime);
+  return diffLo < diffHi ? lo : lo - 1;
+};
+
+export const timeAtBarIndex = (barTimes: readonly number[], index: number): number => {
+  if (barTimes.length === 0) return 0;
+  const clamped = Math.max(0, Math.min(barTimes.length - 1, index));
+  return barTimes[clamped];
+};
+
+export const snapTimeToBar = (barTimes: readonly number[], time: number): number => {
+  const idx = findClosestBarIndex(barTimes, time);
+  return idx === -1 ? time : barTimes[idx];
+};
+
 export const isTradingBar = (bar: { time: number; open: number; close: number; volume?: number }): boolean => {
   const dt = new Date(bar.time * 1000);
   const day = dt.getUTCDay();

@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { Point } from '../drawingTypes';
+import { findClosestBarIndex } from '../utils';
 
 export function useCanvasPosition(
   chart: IChartApi,
   candleSeries: ISeriesApi<'Candlestick'>,
   containerRef: React.RefObject<HTMLDivElement | null>,
-  canvasRef: React.RefObject<HTMLCanvasElement | null>
+  canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  barTimesRef: MutableRefObject<number[]>,
 ) {
   const [position, setPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
 
@@ -42,7 +44,21 @@ export function useCanvasPosition(
   }, [containerRef, chart]);
 
   const mapPointToPixels = (pt: Point) => {
-    const x = chart.timeScale().timeToCoordinate(pt.time as any);
+    const barTimes = barTimesRef.current;
+    let x: number | null = null;
+
+    if (barTimes.length > 0) {
+      const idx = findClosestBarIndex(barTimes, pt.time);
+      if (idx !== -1) {
+        x = chart.timeScale().logicalToCoordinate(idx);
+        if (x === null) {
+          x = chart.timeScale().timeToCoordinate(barTimes[idx] as never);
+        }
+      }
+    } else {
+      x = chart.timeScale().timeToCoordinate(pt.time as never);
+    }
+
     const y = candleSeries.priceToCoordinate(pt.price);
     return { x, y };
   };
@@ -53,11 +69,24 @@ export function useCanvasPosition(
     const x = clientX - rect.left;
     const y = clientY - rect.top;
 
-    const time = chart.timeScale().coordinateToTime(x);
     const price = candleSeries.coordinateToPrice(y);
+    if (price === null) return null;
 
-    if (time === null || price === null) return null;
-    return { time: Number(time), price };
+    const barTimes = barTimesRef.current;
+    let time: number | null = null;
+
+    if (barTimes.length > 0) {
+      const logical = chart.timeScale().coordinateToLogical(x);
+      if (logical === null) return null;
+      const idx = Math.max(0, Math.min(barTimes.length - 1, Math.round(logical)));
+      time = barTimes[idx];
+    } else {
+      const rawTime = chart.timeScale().coordinateToTime(x);
+      if (rawTime === null) return null;
+      time = Number(rawTime);
+    }
+
+    return { time, price };
   };
 
   const mapPixelToPrice = (clientY: number) => {
