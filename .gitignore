@@ -60,7 +60,15 @@ coverage.xml
 
 # OS
 .DS_Store
+**/.DS_Store
 Thumbs.db
+
+# Runtime artifacts (PID files created by launcher scripts)
+*.pid
+.*.pid
+
+# Ad-hoc / local data scripts (personal backfill commands etc.)
+# scripts/makedata.sh
 
 # Logs
 logs/

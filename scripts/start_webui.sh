@@ -33,6 +33,13 @@ if ! docker info >/dev/null 2>&1; then
     exit 1
 fi
 
+# Verify Node.js / npm available for frontend
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo -e "${RED}❌ Node.js and npm are required to run the frontend.${NC}"
+    echo -e "   Install from https://nodejs.org/ (v18+ recommended) and try again."
+    exit 1
+fi
+
 # Create logs directory
 mkdir -p "$PROJECT_DIR/logs"
 
@@ -83,15 +90,28 @@ echo ""
 
 # 2. Start React Frontend locally (Vite dev server)
 echo -e "${YELLOW}2. Starting React frontend (Vite dev server) locally...${NC}"
-if [ ! -d "$PROJECT_DIR/frontend/node_modules" ]; then
-    echo -e "${YELLOW}   Installing npm dependencies first...${NC}"
+if [ ! -f "$PROJECT_DIR/frontend/node_modules/.bin/vite" ]; then
+    echo -e "${YELLOW}   Installing / restoring npm dependencies (missing vite binary)...${NC}"
     cd "$PROJECT_DIR/frontend" && npm install
+    if [ ! -f "$PROJECT_DIR/frontend/node_modules/.bin/vite" ]; then
+        echo -e "${RED}   ❌ npm install did not produce vite. Check your Node.js / npm setup.${NC}"
+        exit 1
+    fi
 fi
 
 cd "$PROJECT_DIR/frontend"
 nohup npm run dev > ../logs/frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo $FRONTEND_PID > ../.frontend.pid
+
+# Give Vite a moment to start or fail fast (e.g. missing binary)
+sleep 1.5
+if ! ps -p $FRONTEND_PID > /dev/null 2>&1; then
+    echo -e "${RED}   ❌ Frontend process died immediately after launch.${NC}"
+    echo -e "   Last log lines:"
+    tail -10 ../logs/frontend.log 2>/dev/null || true
+    exit 1
+fi
 
 echo -e "   ${GREEN}✅ Frontend process started (PID: $FRONTEND_PID)${NC}"
 echo "   📄 Frontend Logs: tail -f logs/frontend.log"
@@ -126,9 +146,11 @@ if [ "$HEALTHY" = false ]; then
     exit 1
 fi
 
-# Check frontend process health
+# Final frontend process health check (in case it died during backend wait)
 if ! ps -p $FRONTEND_PID > /dev/null 2>&1; then
     echo -e "${RED}❌ Frontend failed to start! Check logs/frontend.log for errors${NC}"
+    echo -e "   Last 15 lines of frontend log:"
+    tail -15 "$PROJECT_DIR/logs/frontend.log" 2>/dev/null || true
     exit 1
 fi
 
