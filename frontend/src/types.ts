@@ -6,6 +6,9 @@ export interface PositionSummary {
   current_price: number;
   unrealized_pnl: number;
   open_since: string;
+  leg_id?: string;
+  sl?: number | null;
+  tp?: number | null;
 }
 
 export interface PortfolioState {

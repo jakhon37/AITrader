@@ -11,8 +11,27 @@ export function SessionTradeLog({
   tradeLogEndRef,
 }: SessionTradeLogProps) {
   return (
-    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div
+      className="glass-panel"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        height: '100%',
+        minHeight: 0,
+        boxSizing: 'border-box',
+      }}
+    >
+      <div
+        style={{
+          padding: '10px 14px',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
         <span style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
           <BarChart2 size={14} />
           Session Trade Log
@@ -22,7 +41,16 @@ export function SessionTradeLog({
         </span>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: 8,
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
         {sessionState?.trade_history && sessionState.trade_history.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {sessionState.trade_history.map((t: any, idx: number) => {

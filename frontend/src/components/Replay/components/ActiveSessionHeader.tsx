@@ -1,4 +1,4 @@
-import { Play, Pause, Square, Activity, Layout } from 'lucide-react';
+import { Play, Pause, BarChart3, Activity, Layout } from 'lucide-react';
 
 interface ActiveSessionHeaderProps {
   instrument: string;
@@ -13,7 +13,7 @@ interface ActiveSessionHeaderProps {
   onSpeedChange: (speed: number) => void;
   calculateIndicators: boolean;
   onIndicatorsChange: (checked: boolean) => void;
-  handleStop: () => void;
+  onShowAnalytics?: () => void;
   sidebarHidden?: boolean;
   rightPanelHidden?: boolean;
   onToggleRightPanel?: () => void;
@@ -32,7 +32,7 @@ export function ActiveSessionHeader({
   onSpeedChange,
   calculateIndicators,
   onIndicatorsChange,
-  handleStop,
+  onShowAnalytics,
   sidebarHidden,
   rightPanelHidden,
   onToggleRightPanel,
@@ -135,13 +135,28 @@ export function ActiveSessionHeader({
           {status}
         </span>
 
-        <button 
-          onClick={handleStop}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(255, 23, 68, 0.1)', border: '1px solid var(--neon-red)', padding: '6px 12px', borderRadius: 6, cursor: 'pointer', color: '#ff5252', fontSize: 13 }}
-        >
-          <Square size={12} fill="#ff5252" />
-          End Session
-        </button>
+        {mode === 'manual' && onShowAnalytics && (
+          <button
+            type="button"
+            onClick={onShowAnalytics}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'rgba(0, 229, 255, 0.08)',
+              border: '1px solid var(--neon-cyan)',
+              padding: '6px 12px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              color: 'var(--neon-cyan)',
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            <BarChart3 size={14} />
+            Session Stats
+          </button>
+        )}
 
         {onToggleRightPanel && (
           <button

@@ -97,15 +97,18 @@ class SteppingMixin:
 
         open_positions = [
             PositionSummary(
-                instrument=inst,
-                side=p["side"],
-                size=p["size"],
-                entry_price=p["entry_price"],
-                current_price=p["current_price"],
-                unrealized_pnl=exec_engine._calculate_pnl(p),
-                open_since=p["entry_time"],
+                instrument=leg["instrument"],
+                side=leg["side"],
+                size=leg["size"],
+                entry_price=leg["entry_price"],
+                current_price=leg["current_price"],
+                unrealized_pnl=exec_engine._calculate_pnl(leg),
+                open_since=leg["entry_time"],
+                leg_id=leg_id,
+                sl=leg.get("sl"),
+                tp=leg.get("tp"),
             )
-            for inst, p in exec_engine.positions.items()
+            for leg_id, leg in exec_engine.position_legs.items()
         ]
 
         portfolio = PortfolioState(
@@ -128,5 +131,6 @@ class SteppingMixin:
             current_bar_index=self._current_idx,  # type: ignore[attr-defined]
             open_positions=open_positions,
             trade_history=exec_engine.trade_history,
+            pending_orders=exec_engine.get_pending_orders_serializable(),
             current_portfolio=portfolio,
         )

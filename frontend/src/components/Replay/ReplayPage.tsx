@@ -3,10 +3,15 @@ import {
   startReplay, 
   pauseReplay, 
   resumeReplay, 
-  placeManualOrder, 
-  closeManualPosition, 
-  stopReplay, 
+  placeManualOrder,
+  cancelPendingOrder,
+  modifyPendingOrder,
+  closeManualPosition,
+  closePositionLeg,
+  modifyOpenPosition,
+  stopReplay,
   getReplayState,
+  getSessionAnalytics,
   changeReplayTimeframe,
   changeReplaySpeed,
   changeReplayIndicators
@@ -23,11 +28,14 @@ import {
 } from '../Chart/orderDefaults';
 import type { OrderLinesViewContext } from '../Chart/utils';
 import { ReplayConfig } from './components/ReplayConfig';
-import { PerformanceScorecard } from './components/PerformanceScorecard';
+import { SessionAnalyticsPanel } from './components/SessionAnalyticsPanel';
+import type { SessionAnalytics } from './types/analytics';
 import { ActiveSessionHeader } from './components/ActiveSessionHeader';
 import { OrderTicket } from './components/OrderTicket';
 import { PortfolioState } from './components/PortfolioState';
 import { SessionTradeLog } from './components/SessionTradeLog';
+import type { PendingOrder } from './types';
+import { formatPrice, roundPrice } from './formatPrice';
 
 interface ReplayPageProps {
   sidebarHidden: boolean;
@@ -48,7 +56,12 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const [status, setStatus] = useState<'paused' | 'running' | 'ended'>('paused');
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<any>(null);
-  const [scorecard, setScorecard] = useState<any>(null);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState<SessionAnalytics | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsFinalMode, setAnalyticsFinalMode] = useState(false);
+  const wasRunningBeforeAnalyticsRef = useRef(false);
+  const sessionEndAnalyticsOpenedRef = useRef(false);
 
   // Manual Order Panel State
   const [orderSize, setOrderSize] = useState(1.0);
@@ -72,6 +85,8 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   });
 
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
+  const [selectedPendingOrderId, setSelectedPendingOrderId] = useState<string | null>(null);
+  const [selectedOpenLegId, setSelectedOpenLegId] = useState<string | null>(null);
 
   // Auto Scroll Refs
   const tradeLogEndRef = useRef<HTMLDivElement>(null);
@@ -82,8 +97,8 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     return localStorage.getItem('replay_right_hidden') === 'true';
   });
   const [leftWidth, setLeftWidth] = useState(70);
-  const [ticketHeight, setTicketHeight] = useState(30);
-  const [portfolioHeight, setPortfolioHeight] = useState(35);
+  const [ticketHeight, setTicketHeight] = useState(42);
+  const [portfolioHeight, setPortfolioHeight] = useState(28);
   const [ticketCollapsed, setTicketCollapsed] = useState(() => {
     return localStorage.getItem('replay_ticket_collapsed') === 'true';
   });
@@ -139,7 +154,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     const onMouseMove = (moveEvent: MouseEvent) => {
       const deltaY = moveEvent.clientY - startY;
       const deltaPercent = (deltaY / containerHeight) * 100;
-      const nextTicketHeight = Math.max(10, Math.min(50, startTicketHeight + deltaPercent));
+      const nextTicketHeight = Math.max(10, Math.min(65, startTicketHeight + deltaPercent));
       if (nextTicketHeight + portfolioHeight <= 90) {
         setTicketHeight(nextTicketHeight);
       }
@@ -212,41 +227,14 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     };
   }, []);
 
-  // Listen for real-time WebSocket frames via custom event
-  useEffect(() => {
-    const handleReplayFrame = (e: Event) => {
-      const customEvent = e as CustomEvent<any>;
-      const { session_state, bar } = customEvent.detail;
-      if (bar?.close) {
-        setCurrentBarClose(bar.close);
-      }
-      if (session_state) {
-        setSessionState(session_state);
-        setStatus(session_state.status);
-        setCurrentTime(session_state.current_time);
-        if (session_state.timeframe) {
-          setTimeframe(session_state.timeframe);
-        }
-        if (session_state.calculate_indicators !== undefined) {
-          setCalculateIndicators(session_state.calculate_indicators);
-        }
 
-        // current_bar updated
-        
-        if (session_state.status === 'ended') {
-          // Automatically fetch scorecard on completion
-          handleStop();
-        }
-      }
-    };
-    window.addEventListener('replay_frame', handleReplayFrame);
-    return () => window.removeEventListener('replay_frame', handleReplayFrame);
-  }, []);
 
   // Auto-scroll trade log
   useEffect(() => {
     tradeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessionState?.trade_history]);
+
+  const pendingOrders: PendingOrder[] = sessionState?.pending_orders ?? [];
 
   // Reset presets on instrument or active session change
   useEffect(() => {
@@ -293,7 +281,10 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
         if (res.session.timeframe) {
           setTimeframe(res.session.timeframe);
         }
-        setScorecard(null);
+        setShowAnalytics(false);
+        setAnalyticsData(null);
+        setAnalyticsFinalMode(false);
+        sessionEndAnalyticsOpenedRef.current = false;
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to start replay session.');
@@ -322,20 +313,119 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     }
   };
 
-  async function handleStop() {
+  const openEndedSessionAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
+    try {
+      const res = await getSessionAnalytics();
+      if (res.analytics) {
+        setAnalyticsData(res.analytics);
+        setShowAnalytics(true);
+        setAnalyticsFinalMode(true);
+        setIsActive(false);
+        setStatus('ended');
+      }
+    } catch {
+      try {
+        const res = await stopReplay();
+        if (res.status === 'success' && res.report) {
+          setAnalyticsData(res.report);
+          setShowAnalytics(true);
+          setAnalyticsFinalMode(true);
+          setIsActive(false);
+          setStatus('ended');
+        }
+      } catch (err) {
+        console.error('Failed to load session analytics:', err);
+      }
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
+  // Listen for real-time WebSocket frames via custom event
+  useEffect(() => {
+    const handleReplayFrame = (e: Event) => {
+      const customEvent = e as CustomEvent<any>;
+      const { session_state, bar } = customEvent.detail;
+      if (bar?.close) {
+        setCurrentBarClose(bar.close);
+      }
+      if (session_state) {
+        setSessionState(session_state);
+        setStatus(session_state.status);
+        setCurrentTime(session_state.current_time);
+        if (session_state.timeframe) {
+          setTimeframe(session_state.timeframe);
+        }
+        if (session_state.calculate_indicators !== undefined) {
+          setCalculateIndicators(session_state.calculate_indicators);
+        }
+
+        if (session_state.status === 'ended' && !sessionEndAnalyticsOpenedRef.current) {
+          sessionEndAnalyticsOpenedRef.current = true;
+          void openEndedSessionAnalytics();
+        }
+      }
+    };
+    window.addEventListener('replay_frame', handleReplayFrame);
+    return () => window.removeEventListener('replay_frame', handleReplayFrame);
+  }, [openEndedSessionAnalytics]);
+
+  const handleOpenAnalytics = async () => {
+    if (mode !== 'manual') return;
+    setAnalyticsLoading(true);
+    setErrorMsg(null);
+    wasRunningBeforeAnalyticsRef.current = status === 'running';
+    if (status === 'running') {
+      await handlePause();
+    }
+    try {
+      const res = await getSessionAnalytics();
+      if (res.status === 'success' && res.analytics) {
+        setAnalyticsData(res.analytics);
+        setAnalyticsFinalMode(false);
+        setShowAnalytics(true);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to load session analytics.');
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  const handleContinueFromAnalytics = async () => {
+    setShowAnalytics(false);
+    if (wasRunningBeforeAnalyticsRef.current) {
+      await handleResume();
+    }
+    wasRunningBeforeAnalyticsRef.current = false;
+  };
+
+  const handleEndSessionFromAnalytics = async () => {
+    setAnalyticsLoading(true);
     try {
       const res = await stopReplay();
       if (res.status === 'success') {
         setIsActive(false);
         setStatus('ended');
         if (res.report) {
-          setScorecard(res.report);
+          setAnalyticsData(res.report);
         }
+        setAnalyticsFinalMode(true);
+        setShowAnalytics(true);
       }
-    } catch (err) {
-      console.error('Stop failed:', err);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to end session.');
+    } finally {
+      setAnalyticsLoading(false);
     }
-  }
+  };
+
+  const handleCloseFinalAnalytics = () => {
+    setShowAnalytics(false);
+    setAnalyticsData(null);
+    setAnalyticsFinalMode(false);
+  };
 
   const handleTimeframeChange = async (newTf: string) => {
     try {
@@ -367,7 +457,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   };
 
   const getDefaults = (side: 'buy' | 'sell', entry: number) =>
-    getOrderLevelDefaults(timeframe, side, entry, recentBarsRef.current);
+    getOrderLevelDefaults(timeframe, side, entry, recentBarsRef.current, instrument);
 
   const bumpOrderLinesFocus = () => setOrderLinesFocusKey((k) => k + 1);
 
@@ -388,7 +478,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const handleTogglePreset = (enabled: boolean) => {
     setPresetEnabled(enabled);
     if (enabled && currentClosePrice > 0) {
-      setPresetEntryPrice(currentClosePrice);
+      setPresetEntryPrice(roundPrice(currentClosePrice, instrument));
     }
   };
 
@@ -397,7 +487,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     if (enabled) {
       const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
       if (tpEnabled && tpPrice > 0 && entry > 0) {
-        setSlPrice(getStopFromTakeProfit(orderSide, entry, tpPrice));
+        setSlPrice(getStopFromTakeProfit(orderSide, entry, tpPrice, instrument));
       } else {
         const { sl } = getDefaults(orderSide, entry);
         setSlPrice(sl);
@@ -411,7 +501,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     if (enabled) {
       const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
       if (slEnabled && slPrice > 0 && entry > 0) {
-        setTpPrice(getTakeProfitFromStop(orderSide, entry, slPrice));
+        setTpPrice(getTakeProfitFromStop(orderSide, entry, slPrice, instrument));
       } else {
         const { tp } = getDefaults(orderSide, entry);
         setTpPrice(tp);
@@ -430,6 +520,8 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
 
   const handlePositionSelect = useCallback((pos: { entry: number; sl: number; tp: number } | null) => {
     if (pos) {
+      setSelectedPendingOrderId(null);
+      setSelectedOpenLegId(null);
       setPresetEnabled(true);
       setPresetEntryPrice(pos.entry);
       setSlEnabled(true);
@@ -437,7 +529,6 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
       setTpEnabled(true);
       setTpPrice(pos.tp);
       updateRecentCandleRange(recentBarsRef.current, pos.entry);
-      bumpOrderLinesFocus();
     }
   }, [timeframe]);
 
@@ -451,17 +542,185 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     setOrderDraftKey((k) => k + 1);
   }, []);
 
+  /** Reset chart draft but keep limit-entry mode on for placing another preset order. */
+  // Clear open-position edit when leg closes
+  useEffect(() => {
+    if (!selectedOpenLegId) return;
+    const stillOpen = sessionState?.open_positions?.some((p: { leg_id?: string }) => p.leg_id === selectedOpenLegId);
+    if (!stillOpen) {
+      setSelectedOpenLegId(null);
+    }
+  }, [sessionState?.open_positions, selectedOpenLegId]);
+
+  const prepareNextLimitOrder = useCallback(() => {
+    setSelectedPendingOrderId(null);
+    setSelectedOpenLegId(null);
+    setPresetEnabled(true);
+    setPresetEntryPrice(currentClosePrice > 0 ? currentClosePrice : 0);
+    setSlEnabled(false);
+    setSlPrice(0);
+    setTpEnabled(false);
+    setTpPrice(0);
+    setOrderDraftKey((k) => k + 1);
+    if (currentClosePrice > 0) {
+      updateRecentCandleRange(recentBarsRef.current, currentClosePrice);
+      bumpOrderLinesFocus();
+    }
+  }, [currentClosePrice, timeframe]);
+
+  // Clear chart edit state when selected pending order fills or is cancelled
+  useEffect(() => {
+    if (!selectedPendingOrderId) return;
+    const stillPending = pendingOrders.some((o) => o.order_id === selectedPendingOrderId);
+    if (!stillPending) {
+      prepareNextLimitOrder();
+    }
+  }, [pendingOrders, selectedPendingOrderId, prepareNextLimitOrder]);
+
+  const handleClearOpenPositionSelection = useCallback(() => {
+    setSelectedOpenLegId(null);
+    clearOrderDraft();
+  }, [clearOrderDraft]);
+
+  const loadOpenPositionToChart = useCallback((pos: { leg_id?: string; side: string; entry_price: number; sl?: number | null; tp?: number | null }) => {
+    if (!pos.leg_id) return;
+    if (pos.leg_id === selectedOpenLegId) {
+      handleClearOpenPositionSelection();
+      return;
+    }
+    setSelectedOpenLegId(pos.leg_id);
+    setSelectedPendingOrderId(null);
+    const side = pos.side.toLowerCase() === 'buy' || pos.side.toLowerCase() === 'long' ? 'buy' : 'sell';
+    const hasSl = pos.sl != null && pos.sl > 0;
+    const hasTp = pos.tp != null && pos.tp > 0;
+    const { sl, tp } = getDefaults(side, pos.entry_price);
+    setPresetEnabled(true);
+    setPresetEntryPrice(roundPrice(pos.entry_price, instrument));
+    setOrderSide(side);
+    setSlEnabled(true);
+    setSlPrice(hasSl ? roundPrice(pos.sl!, instrument) : sl);
+    setTpEnabled(true);
+    setTpPrice(hasTp ? roundPrice(pos.tp!, instrument) : tp);
+    updateRecentCandleRange(recentBarsRef.current, pos.entry_price);
+    bumpOrderLinesFocus();
+  }, [selectedOpenLegId, handleClearOpenPositionSelection, instrument, timeframe]);
+
+  const openPositionDraft = selectedOpenLegId
+    ? { slPrice, tpPrice, slEnabled, tpEnabled }
+    : undefined;
+
+  const handleOpenPositionSlToggle = useCallback((enabled: boolean) => {
+    setSlEnabled(enabled);
+  }, []);
+
+  const handleOpenPositionTpToggle = useCallback((enabled: boolean) => {
+    setTpEnabled(enabled);
+  }, []);
+
+  const handleOpenPositionSlChange = useCallback((price: number) => {
+    setSlPrice(roundPrice(price, instrument));
+  }, [instrument]);
+
+  const handleOpenPositionTpChange = useCallback((price: number) => {
+    setTpPrice(roundPrice(price, instrument));
+  }, [instrument]);
+
+  const loadPendingOrderToChart = useCallback((order: PendingOrder) => {
+    setSelectedOpenLegId(null);
+    setSelectedPendingOrderId(order.order_id);
+    setOrderSide(order.side);
+    setOrderSize(order.size_lots);
+    setPresetEnabled(true);
+    setPresetEntryPrice(order.entry_price);
+    setSlEnabled(order.sl != null && order.sl > 0);
+    setSlPrice(order.sl ?? 0);
+    setTpEnabled(order.tp != null && order.tp > 0);
+    setTpPrice(order.tp ?? 0);
+    updateRecentCandleRange(recentBarsRef.current, order.entry_price);
+    bumpOrderLinesFocus();
+  }, [timeframe]);
+
+  const handleClearPendingSelection = useCallback(() => {
+    prepareNextLimitOrder();
+  }, [prepareNextLimitOrder]);
+
+  const handleSelectPendingOrder = useCallback((order: PendingOrder) => {
+    loadPendingOrderToChart(order);
+  }, [loadPendingOrderToChart]);
+
+  const handleCancelPendingOrder = async () => {
+    if (!selectedPendingOrderId) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const res = await cancelPendingOrder(selectedPendingOrderId);
+      if (res.status === 'success') {
+        setSessionState(res.session);
+        prepareNextLimitOrder();
+        setSuccessMsg('Pending limit order cancelled.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to cancel pending order.');
+    }
+  };
+
+  const handleUpdatePendingOrder = async () => {
+    if (!selectedPendingOrderId) return;
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    if (presetEntryPrice <= 0) {
+      setErrorMsg('Set a limit entry price before updating.');
+      return;
+    }
+    try {
+      const entry = presetEntryPrice;
+      const sl = slEnabled ? slPrice : null;
+      const tp = tpEnabled ? tpPrice : null;
+      const res = await modifyPendingOrder(
+        selectedPendingOrderId,
+        orderSide,
+        orderSize,
+        entry,
+        sl,
+        tp,
+      );
+      if (res.status === 'success') {
+        setSessionState(res.session);
+        setSuccessMsg(`Limit ${orderSide.toUpperCase()} updated @ ${formatPrice(entry, instrument)}`);
+        const updated = res.session.pending_orders?.find(
+          (o: PendingOrder) => o.order_id === selectedPendingOrderId,
+        );
+        if (updated) {
+          loadPendingOrderToChart(updated);
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to update pending order.');
+    }
+  };
+
   const handleBuy = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (presetEnabled && presetEntryPrice <= 0) {
+      setErrorMsg('Set a limit entry price before placing.');
+      return;
+    }
     try {
       const entry = presetEnabled ? presetEntryPrice : null;
       const sl = slEnabled ? slPrice : null;
       const tp = tpEnabled ? tpPrice : null;
       const res = await placeManualOrder('buy', orderSize, entry, sl, tp);
       if (res.status === 'success') {
-        setSuccessMsg(`Market BUY ${orderSize} lots filled at ${res.order.filled_price}`);
-        clearOrderDraft();
+        setSessionState(res.session);
+        if (res.order.status === 'pending') {
+          setSuccessMsg(`Limit BUY ${orderSize} lots queued @ ${formatPrice(res.order.limit_price ?? 0, instrument)}`);
+          setTicketCollapsed(false);
+          prepareNextLimitOrder();
+        } else {
+          setSuccessMsg(`Market BUY ${orderSize} lots filled at ${res.order.filled_price}`);
+          clearOrderDraft();
+        }
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to execute Buy order.');
@@ -471,30 +730,81 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const handleSell = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    if (presetEnabled && presetEntryPrice <= 0) {
+      setErrorMsg('Set a limit entry price before placing.');
+      return;
+    }
     try {
       const entry = presetEnabled ? presetEntryPrice : null;
       const sl = slEnabled ? slPrice : null;
       const tp = tpEnabled ? tpPrice : null;
       const res = await placeManualOrder('sell', orderSize, entry, sl, tp);
       if (res.status === 'success') {
-        setSuccessMsg(`Market SELL ${orderSize} lots filled at ${res.order.filled_price}`);
-        clearOrderDraft();
+        setSessionState(res.session);
+        if (res.order.status === 'pending') {
+          setSuccessMsg(`Limit SELL ${orderSize} lots queued @ ${formatPrice(res.order.limit_price ?? 0, instrument)}`);
+          setTicketCollapsed(false);
+          prepareNextLimitOrder();
+        } else {
+          setSuccessMsg(`Market SELL ${orderSize} lots filled at ${res.order.filled_price}`);
+          clearOrderDraft();
+        }
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to execute Sell order.');
     }
   };
 
-  const handleClosePosition = async (inst: string) => {
+  const handleCloseLeg = async (legId: string) => {
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await closeManualPosition(inst);
+      const res = await closePositionLeg(legId);
       if (res.status === 'success') {
-        setSuccessMsg(`Closed all positions for ${inst} at ${res.order.filled_price}`);
+        setSessionState(res.session);
+        if (legId === selectedOpenLegId) {
+          setSelectedOpenLegId(null);
+          clearOrderDraft();
+        }
+        setSuccessMsg(`Closed position leg at ${res.order.filled_price}`);
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to close positions.');
+      setErrorMsg(err.message || 'Failed to close position.');
+    }
+  };
+
+  const handleModifyLeg = async (
+    legId: string,
+    stopLoss: number | null,
+    takeProfit: number | null,
+    options?: { clearSl?: boolean; clearTp?: boolean },
+  ) => {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const res = await modifyOpenPosition(
+        legId,
+        stopLoss != null ? roundPrice(stopLoss, instrument) : null,
+        takeProfit != null ? roundPrice(takeProfit, instrument) : null,
+        options,
+      );
+      if (res.status === 'success') {
+        setSessionState(res.session);
+        setSuccessMsg('Position SL/TP updated.');
+        const updated = res.session.open_positions?.find((p: { leg_id?: string; sl?: number | null; tp?: number | null; entry_price?: number }) => p.leg_id === legId);
+        if (updated) {
+          const hasSl = updated.sl != null && updated.sl > 0;
+          const hasTp = updated.tp != null && updated.tp > 0;
+          setPresetEnabled(true);
+          setPresetEntryPrice(roundPrice(updated.entry_price ?? presetEntryPrice, instrument));
+          setSlEnabled(hasSl);
+          setSlPrice(hasSl ? roundPrice(updated.sl!, instrument) : 0);
+          setTpEnabled(hasTp);
+          setTpPrice(hasTp ? roundPrice(updated.tp!, instrument) : 0);
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to update position levels.');
     }
   };
 
@@ -528,7 +838,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   };
 
   // 1. Setup Configuration View
-  if (!isActive && !scorecard) {
+  if (!isActive && !showAnalytics) {
     return (
       <ReplayConfig
         instrument={instrument}
@@ -551,19 +861,21 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     );
   }
 
-  // 2. Scorecard View
-  if (scorecard && !isActive) {
+  // 2. Final analytics only (session ended)
+  if (!isActive && showAnalytics && analyticsData) {
     return (
-      <PerformanceScorecard
-        scorecard={scorecard}
+      <SessionAnalyticsPanel
+        analytics={analyticsData}
         instrument={instrument}
-        setScorecard={setScorecard}
         formatCurrency={formatCurrency}
+        loading={analyticsLoading}
+        finalMode
+        onClose={handleCloseFinalAnalytics}
       />
     );
   }
 
-  // 3. Active Session View
+  // 3. Active Session View (+ optional analytics overlay)
   return (
     <div style={{ display: 'grid', gridTemplateRows: '56px 1fr', height: '100vh', overflow: 'hidden' }}>
       <ActiveSessionHeader
@@ -579,7 +891,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
         onSpeedChange={handleSpeedChange}
         calculateIndicators={calculateIndicators}
         onIndicatorsChange={handleIndicatorsChange}
-        handleStop={handleStop}
+        onShowAnalytics={handleOpenAnalytics}
         sidebarHidden={sidebarHidden}
         rightPanelHidden={rightHidden}
         onToggleRightPanel={handleToggleRightPanel}
@@ -648,9 +960,9 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
               slLinePrice={slEnabled ? slPrice : null}
               tpLinePrice={tpEnabled ? tpPrice : null}
               onPositionSelect={handlePositionSelect}
-              onUpdateEntryPrice={setPresetEntryPrice}
-              onUpdateSLPrice={setSlPrice}
-              onUpdateTPPrice={setTpPrice}
+              onUpdateEntryPrice={(price) => setPresetEntryPrice(roundPrice(price, instrument))}
+              onUpdateSLPrice={handleOpenPositionSlChange}
+              onUpdateTPPrice={handleOpenPositionTpChange}
               orderDraftKey={orderDraftKey}
               orderLinesFocusKey={orderLinesFocusKey}
               recentCandleRange={recentCandleRange ?? undefined}
@@ -701,7 +1013,16 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
           }}
         >
             {/* Row 1: Order Ticket */}
-            <div style={{ height: ticketCollapsed ? 'auto' : `${ticketHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
+            <div
+              style={{
+                height: ticketCollapsed ? 'auto' : `${ticketHeight}%`,
+                minHeight: ticketCollapsed ? undefined : 220,
+                flexShrink: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
               <OrderTicket
                 orderSize={orderSize}
                 setOrderSize={setOrderSize}
@@ -727,6 +1048,15 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
                 orderSide={orderSide}
                 onToggleSide={handleToggleSide}
                 currentClosePrice={currentClosePrice}
+                pendingOrders={pendingOrders}
+                selectedPendingOrderId={selectedPendingOrderId}
+                onSelectPendingOrder={handleSelectPendingOrder}
+                onClearPendingSelection={handleClearPendingSelection}
+                onCancelPendingOrder={handleCancelPendingOrder}
+                onUpdatePendingOrder={handleUpdatePendingOrder}
+                editingOpenPosition={!!selectedOpenLegId}
+                onClearOpenPositionSelection={handleClearOpenPositionSelection}
+                instrument={instrument}
               />
             </div>
 
@@ -736,12 +1066,22 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
             )}
 
             {/* Row 2: Portfolio State */}
-            <div style={{ height: `${portfolioHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
+            <div style={{ height: `${portfolioHeight}%`, minHeight: 120, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <PortfolioState
                 sessionState={sessionState}
                 formatCurrency={formatCurrency}
+                instrument={instrument}
                 mode={mode}
-                handleClosePosition={handleClosePosition}
+                selectedOpenLegId={selectedOpenLegId}
+                openPositionDraft={openPositionDraft}
+                successMsg={selectedOpenLegId ? successMsg : null}
+                onSelectOpenPosition={loadOpenPositionToChart}
+                onDraftSlToggle={handleOpenPositionSlToggle}
+                onDraftTpToggle={handleOpenPositionTpToggle}
+                onDraftSlChange={handleOpenPositionSlChange}
+                onDraftTpChange={handleOpenPositionTpChange}
+                onCloseLeg={handleCloseLeg}
+                onModifyLeg={handleModifyLeg}
               />
             </div>
 
@@ -749,7 +1089,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
             <div className="resize-handle-v" onMouseDown={handleVerticalDrag2} />
 
             {/* Row 3: Session Trade Log */}
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 100, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <SessionTradeLog
                 sessionState={sessionState}
                 tradeLogEndRef={tradeLogEndRef}
@@ -757,6 +1097,18 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
             </div>
         </div>
       </div>
+
+      {showAnalytics && analyticsData && !analyticsFinalMode && (
+        <SessionAnalyticsPanel
+          analytics={analyticsData}
+          instrument={instrument}
+          formatCurrency={formatCurrency}
+          loading={analyticsLoading}
+          onContinue={handleContinueFromAnalytics}
+          onEndSession={handleEndSessionFromAnalytics}
+          onClose={handleContinueFromAnalytics}
+        />
+      )}
     </div>
   );
 }

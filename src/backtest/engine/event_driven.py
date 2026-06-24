@@ -23,6 +23,22 @@ from src.backtest.engine.contracts import Trade
 logger = logging.getLogger(__name__)
 
 
+def _order_id_from_signal(signal_id: str) -> str:
+    """Stable short id for pending-order UI; use 12 chars to avoid UUID prefix collisions."""
+    return signal_id.replace("-", "")[:12]
+
+
+def _price_decimals(instrument: Instrument) -> int:
+    return 3 if "JPY" in instrument.value else 5
+
+
+def _round_price(instrument: Instrument, price: Optional[float]) -> Optional[float]:
+    if price is None:
+        return None
+    decimals = _price_decimals(instrument)
+    return float(f"{float(price):.{decimals}f}")
+
+
 class MockDecisionEngine:
     """Subscribes to TECHNICAL_SIGNAL and republishes as TRADE_SIGNAL for isolated event backtests."""
 
@@ -57,14 +73,18 @@ class MockDecisionEngine:
 
 
 class MockExecutionEngine:
-    """Processes TRADE_SIGNALs and updates account balance on an isolated bus."""
+    """Processes TRADE_SIGNALs and updates account balance on an isolated bus.
+
+    Each fill opens an independent position leg (keyed by signal_id). Same-direction
+    orders are never merged — Replay Studio can track multiple preset limits separately.
+    """
 
     def __init__(self, bus: Bus, initial_capital: float = 10000.0) -> None:
         self.bus = bus
         self.capital = initial_capital
         self.balance = initial_capital
         self.equity = initial_capital
-        self.positions: dict[Instrument, dict[str, Any]] = {}
+        self.position_legs: dict[str, dict[str, Any]] = {}
         self.pending_orders: list[dict[str, Any]] = []
         self.trade_history: list[Trade] = []
         self.equity_history: list[tuple[datetime, float]] = []
@@ -77,6 +97,34 @@ class MockExecutionEngine:
         await self.bus.unsubscribe(BusChannel.TRADE_SIGNAL, self.on_trade_signal)
         await self.bus.unsubscribe(BusChannel.OHLCV_BAR, self.on_ohlcv_bar)
 
+    def _legs_for_instrument(self, instrument: Instrument) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (leg_id, leg)
+            for leg_id, leg in self.position_legs.items()
+            if leg["instrument"] == instrument
+        ]
+
+    def _resolve_leg_id(self, leg_id: str) -> Optional[str]:
+        """Match a leg id from the UI/API to position_legs keys.
+
+        Accepts full signal UUID, short order_id prefix, or dashed UUID prefix.
+        """
+        if leg_id in self.position_legs:
+            return leg_id
+
+        normalized = leg_id.replace("-", "").lower()
+        if not normalized:
+            return None
+
+        for key in self.position_legs:
+            key_norm = key.replace("-", "").lower()
+            if key_norm == normalized or key_norm.startswith(normalized) or normalized.startswith(key_norm):
+                return key
+            if _order_id_from_signal(key) == leg_id:
+                return key
+
+        return None
+
     async def on_ohlcv_bar(self, payload: OHLCVBar) -> None:
         instrument = payload.instrument
         close = payload.close
@@ -84,14 +132,13 @@ class MockExecutionEngine:
         low = payload.low
         timestamp = payload.timestamp
 
-        # Track latest prices
         if not hasattr(self, "latest_prices"):
             self.latest_prices = {}
         prev_close = self.latest_prices.get(instrument, close)
         self.latest_prices[instrument] = close
 
-        # 1. Process pending limit/stop orders
-        triggered_indices = []
+        # 1. Process pending limit orders
+        triggered_indices: list[int] = []
         for i, order in enumerate(self.pending_orders):
             if order["instrument"] != instrument:
                 continue
@@ -99,7 +146,6 @@ class MockExecutionEngine:
             entry_price = order["entry_price"]
             side = order["side"]
 
-            # Determine trigger condition (candle touch or gap cross)
             triggered = False
             if low <= entry_price <= high:
                 triggered = True
@@ -107,34 +153,33 @@ class MockExecutionEngine:
                 triggered = True
 
             if triggered:
-                # Close opposite position if exists
-                if instrument in self.positions:
-                    await self._close_position(instrument, entry_price, timestamp)
-
-                # Execute order
                 slippage_val = 0.00005
                 fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
 
-                self.positions[instrument] = {
-                    "side": side,
-                    "size": order["size"],
-                    "entry_price": fill_price,
-                    "current_price": close,
-                    "sl": order["sl"],
-                    "tp": order["tp"],
-                    "entry_time": timestamp,
-                }
+                leg_id = order["signal_id"]
+                self._open_leg(
+                    leg_id,
+                    instrument,
+                    side,
+                    order["size"],
+                    fill_price,
+                    close,
+                    order["sl"],
+                    order["tp"],
+                    timestamp,
+                )
                 logger.info(f"Pending limit order triggered for {instrument.value} at {fill_price}")
                 triggered_indices.append(i)
 
         for idx in sorted(triggered_indices, reverse=True):
             self.pending_orders.pop(idx)
 
-        # 2. Update current price and check SL/TP for open position
-        if instrument in self.positions:
-            pos = self.positions[instrument]
-            pos["current_price"] = close
+        # 2. Update mark-to-market and check SL/TP per leg
+        for leg_id, pos in list(self.position_legs.items()):
+            if pos["instrument"] != instrument:
+                continue
 
+            pos["current_price"] = close
             side = pos["side"]
             sl = pos["sl"]
             tp = pos["tp"]
@@ -157,13 +202,10 @@ class MockExecutionEngine:
                     exit_price = tp
 
             if should_close:
-                await self._close_position(instrument, exit_price, timestamp)
+                await self._close_leg(leg_id, exit_price, timestamp)
 
-        # 3. Record daily/hourly equity curve value
-        unrealized_pnl = 0.0
-        for pos in self.positions.values():
-            unrealized_pnl += self._calculate_pnl(pos)
-
+        # 3. Record equity curve value
+        unrealized_pnl = sum(self._calculate_pnl(leg) for leg in self.position_legs.values())
         self.equity = self.balance + unrealized_pnl
         self.equity_history.append((timestamp, self.equity))
 
@@ -172,98 +214,184 @@ class MockExecutionEngine:
         side = payload.suggested_side
         timestamp = payload.timestamp
 
-        # Close existing position if signal is Neutral
         if side is None:
-            if instrument in self.positions:
-                await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
-            # Also clear pending orders on neutral signal
+            if self._legs_for_instrument(instrument):
+                await self._close_all_legs(instrument, payload.suggested_entry or 0.0, timestamp)
             self.pending_orders = [o for o in self.pending_orders if o["instrument"] != instrument]
             return
 
-        # Close opposite position if exists (only for immediate orders; pending limit orders will close opposite on trigger)
         is_lim = getattr(payload, "is_limit", False)
-        if not is_lim:
-            if instrument in self.positions:
-                existing = self.positions[instrument]
-                if existing["side"] != side:
-                    await self._close_position(instrument, payload.suggested_entry or 0.0, timestamp)
-                else:
-                    # Already holding this direction
-                    return
-
-        # Standard Forex lot sizes: 1 lot = 100,000 units
         entry_price = payload.suggested_entry or 0.0
         if entry_price == 0.0:
             return
 
         size_lots = payload.suggested_size if payload.suggested_size is not None else 0.1
         unit_size = size_lots * 100000.0
-
         if is_lim:
-            # If the current price has already reached/crossed the limit, execute immediately.
-            # Otherwise, queue as a pending order.
-            latest_price = getattr(self, "latest_prices", {}).get(instrument, None)
-            if latest_price is not None:
-                triggered = False
-                if side == OrderSide.BUY and latest_price <= entry_price:
-                    triggered = True
-                elif side == OrderSide.SELL and latest_price >= entry_price:
-                    triggered = True
-
-                if triggered:
-                    if instrument in self.positions:
-                        await self._close_position(instrument, entry_price, timestamp)
-                    slippage_val = 0.00005
-                    fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
-                    self.positions[instrument] = {
-                        "side": side,
-                        "size": unit_size,
-                        "entry_price": fill_price,
-                        "current_price": latest_price,
-                        "sl": payload.suggested_sl,
-                        "tp": payload.suggested_tp,
-                        "entry_time": timestamp,
-                    }
-                    logger.info(f"Limit order filled immediately at {fill_price}")
-                    return
-
             self.pending_orders.append({
+                "order_id": _order_id_from_signal(payload.signal_id),
+                "signal_id": payload.signal_id,
                 "instrument": instrument,
                 "side": side,
                 "size": unit_size,
-                "entry_price": entry_price,
-                "sl": payload.suggested_sl,
-                "tp": payload.suggested_tp,
+                "size_lots": size_lots,
+                "entry_price": _round_price(instrument, entry_price) or entry_price,
+                "sl": _round_price(instrument, payload.suggested_sl),
+                "tp": _round_price(instrument, payload.suggested_tp),
                 "timestamp": timestamp,
             })
             logger.info(f"Pending limit order queued for {instrument.value} at {entry_price}")
             return
 
-        # Apply slippage (0.5 pip = 0.00005)
         slippage_val = 0.00005
         fill_price = entry_price + (slippage_val if side == OrderSide.BUY else -slippage_val)
 
-        self.positions[instrument] = {
+        self._open_leg(
+            payload.signal_id,
+            instrument,
+            side,
+            unit_size,
+            fill_price,
+            fill_price,
+            payload.suggested_sl,
+            payload.suggested_tp,
+            timestamp,
+        )
+
+    def modify_position_leg(
+        self,
+        leg_id: str,
+        *,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        clear_sl: bool = False,
+        clear_tp: bool = False,
+    ) -> bool:
+        """Update SL/TP on an open position leg."""
+        resolved_id = self._resolve_leg_id(leg_id)
+        if not resolved_id:
+            return False
+        leg = self.position_legs[resolved_id]
+        instrument = leg["instrument"]
+        if clear_sl:
+            leg["sl"] = None
+        elif stop_loss is not None:
+            leg["sl"] = _round_price(instrument, stop_loss)
+        if clear_tp:
+            leg["tp"] = None
+        elif take_profit is not None:
+            leg["tp"] = _round_price(instrument, take_profit)
+        return True
+
+    async def close_position_leg(
+        self,
+        leg_id: str,
+        exit_price: float,
+        timestamp: datetime,
+    ) -> bool:
+        """Close a single open leg by id."""
+        resolved_id = self._resolve_leg_id(leg_id)
+        if not resolved_id:
+            return False
+        await self._close_leg(resolved_id, exit_price, timestamp)
+        return True
+
+    def get_pending_orders_serializable(self) -> list[dict[str, Any]]:
+        """Return pending limit orders for API / WebSocket session state."""
+        return [
+            {
+                "order_id": o["order_id"],
+                "signal_id": o["signal_id"],
+                "instrument": o["instrument"].value,
+                "side": o["side"].value.lower(),
+                "size_lots": o.get("size_lots", o["size"] / 100_000.0),
+                "entry_price": o["entry_price"],
+                "sl": o.get("sl"),
+                "tp": o.get("tp"),
+                "created_at": o["timestamp"].isoformat()
+                if hasattr(o["timestamp"], "isoformat")
+                else str(o["timestamp"]),
+            }
+            for o in self.pending_orders
+        ]
+
+    def cancel_pending_order(self, order_id: str) -> bool:
+        """Remove a queued limit order by order_id. Returns True if found."""
+        before = len(self.pending_orders)
+        self.pending_orders = [o for o in self.pending_orders if o.get("order_id") != order_id]
+        return len(self.pending_orders) < before
+
+    def modify_pending_order(
+        self,
+        order_id: str,
+        *,
+        side: OrderSide,
+        size_lots: float,
+        entry_price: float,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+    ) -> bool:
+        """Update an existing pending limit order in place."""
+        for order in self.pending_orders:
+            if order.get("order_id") != order_id:
+                continue
+            order["side"] = side
+            order["size"] = size_lots * 100_000.0
+            order["size_lots"] = size_lots
+            inst = order["instrument"]
+            order["entry_price"] = _round_price(inst, entry_price) or entry_price
+            order["sl"] = _round_price(inst, stop_loss)
+            order["tp"] = _round_price(inst, take_profit)
+            return True
+        return False
+
+    def _open_leg(
+        self,
+        leg_id: str,
+        instrument: Instrument,
+        side: OrderSide,
+        size: float,
+        entry_price: float,
+        current_price: float,
+        sl: Optional[float],
+        tp: Optional[float],
+        timestamp: datetime,
+    ) -> None:
+        if leg_id in self.position_legs:
+            logger.warning(
+                "Refusing to overwrite open leg %s for %s — each fill must use a unique signal_id",
+                leg_id[:8],
+                instrument.value,
+            )
+            return
+        self.position_legs[leg_id] = {
+            "instrument": instrument,
             "side": side,
-            "size": unit_size,
-            "entry_price": fill_price,
-            "current_price": fill_price,
-            "sl": payload.suggested_sl,
-            "tp": payload.suggested_tp,
+            "size": size,
+            "entry_price": _round_price(instrument, entry_price) or entry_price,
+            "current_price": _round_price(instrument, current_price) or current_price,
+            "sl": _round_price(instrument, sl),
+            "tp": _round_price(instrument, tp),
             "entry_time": timestamp,
         }
 
-    async def _close_position(self, instrument: Instrument, exit_price: float, timestamp: datetime) -> None:
-        pos = self.positions.pop(instrument, None)
+    async def _close_all_legs(
+        self,
+        instrument: Instrument,
+        exit_price: float,
+        timestamp: datetime,
+    ) -> None:
+        for leg_id, _ in list(self._legs_for_instrument(instrument)):
+            await self._close_leg(leg_id, exit_price, timestamp)
+
+    async def _close_leg(self, leg_id: str, exit_price: float, timestamp: datetime) -> None:
+        pos = self.position_legs.pop(leg_id, None)
         if not pos:
             return
 
         pnl = self._calculate_pnl(pos, exit_price)
-
-        # Subtract commission (0.01% of notional)
         commission = pos["size"] * exit_price * 0.0001
         pnl -= commission
-
         self.balance += pnl
 
         trade = Trade(
@@ -287,8 +415,7 @@ class MockExecutionEngine:
 
         if side == OrderSide.BUY:
             return size * (current - entry)
-        else:
-            return size * (entry - current)
+        return size * (entry - current)
 
 
 class EventDrivenBacktestEngine:
@@ -307,21 +434,17 @@ class EventDrivenBacktestEngine:
         decision_engine = MockDecisionEngine(bus)
         exec_engine = MockExecutionEngine(bus, initial_capital=self.initial_capital)
 
-        # Start components
         await tech_engine.start()
         await decision_engine.start()
         await exec_engine.start()
 
-        # Iterate over bars
         async for bar in feed.run(speed=0.0):
             await bus.publish(BusChannel.OHLCV_BAR, bar)
 
-        # Stop components
         await tech_engine.stop()
         await decision_engine.stop()
         await exec_engine.stop()
 
-        # Convert equity history to Series
         if exec_engine.equity_history:
             times, values = zip(*exec_engine.equity_history)
             equity_curve = pd.Series(values, index=pd.to_datetime(times))

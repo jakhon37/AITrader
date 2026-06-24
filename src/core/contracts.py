@@ -275,6 +275,9 @@ class PositionSummary(BaseModel):
     current_price:  float
     unrealized_pnl: float
     open_since:     datetime
+    leg_id:         Optional[str] = None
+    sl:             Optional[float] = None
+    tp:             Optional[float] = None
 
 
 class PortfolioState(BaseModel):

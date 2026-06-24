@@ -17,9 +17,10 @@ from src.core.contracts import BusChannel, Instrument
 from src.data.store import DataStore
 from src.backtest.engine import MockExecutionEngine
 from src.backtest.feed import DataFeed
-from src.backtest.scorer import ReplayScorer
+
 from src.backtest.replay._utils import get_buffer_duration
 from src.backtest.replay._base import BaseReplaySession
+from src.backtest.replay.analytics import build_manual_session_analytics
 from src.backtest.replay.manual.stepping import SteppingMixin
 from src.backtest.replay.manual.trading import TradingMixin
 from src.technical.engine import TechnicalEngine
@@ -156,37 +157,47 @@ class ManualReplaySession(SteppingMixin, TradingMixin, BaseReplaySession):
 
         history = self.exec_engine.trade_history if self.exec_engine else []
         equity_hist = self.exec_engine.equity_history if self.exec_engine else []
+        open_count = len(self.exec_engine.position_legs) if self.exec_engine else 0
+
+        analytics = build_manual_session_analytics(
+            trade_history=history,
+            equity_history=equity_hist,
+            initial_capital=self.initial_capital,
+            instrument=self.instrument,
+            start_date=self.start_date,
+            current_time=self.state.current_time,
+            open_positions_count=open_count,
+            session_status="ended",
+        )
 
         times, values = (
             zip(*equity_hist) if equity_hist else ([self.start_date], [self.initial_capital])
         )
         equity_curve = pd.Series(values, index=pd.to_datetime(times))
 
-        scorecard = ReplayScorer.calculate_metrics(
-            trades=history,  # type: ignore[arg-type]
-            equity_curve=equity_curve,
-            initial_capital=self.initial_capital,
-        )
-
         self.reporter.generate(
             mode="manual",
             instrument=self.instrument,
             start_date=self.start_date,
             end_date=self.end_date,
-            metrics=scorecard,
-            trades=[
-                {
-                    "entry_time": t.entry_time,
-                    "exit_time": t.exit_time,
-                    "entry_price": t.entry_price,
-                    "exit_price": t.exit_price,
-                    "size": t.size,
-                    "side": t.side,
-                    "pnl": t.pnl,
-                    "pnl_pct": t.pnl_pct,
-                }
-                for t in history
-            ],
+            metrics={k: v for k, v in analytics.items() if k not in ("trades", "equity_curve", "trade_pnls", "summary")},
+            trades=analytics["trades"],
             equity_curve=equity_curve,
         )
-        return scorecard
+        return analytics
+
+    def build_live_analytics(self) -> Dict[str, Any]:
+        """Score the current session without tearing it down (for in-session review)."""
+        history = self.exec_engine.trade_history if self.exec_engine else []
+        equity_hist = self.exec_engine.equity_history if self.exec_engine else []
+        open_count = len(self.exec_engine.position_legs) if self.exec_engine else 0
+        return build_manual_session_analytics(
+            trade_history=history,
+            equity_history=equity_hist,
+            initial_capital=self.initial_capital,
+            instrument=self.instrument,
+            start_date=self.start_date,
+            current_time=self.state.current_time,
+            open_positions_count=open_count,
+            session_status=self.state.status,
+        )

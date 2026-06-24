@@ -7,7 +7,11 @@ function syncChartSize(chart: IChartApi, container: HTMLElement) {
   const w = Math.floor(width);
   const h = Math.floor(height);
   if (w > 0 && h > 0) {
-    chart.resize(w, h);
+    try {
+      chart.resize(w, h);
+    } catch {
+      // Chart may already be disposed when deferred resize timers fire.
+    }
   }
 }
 
@@ -41,11 +45,16 @@ export function useChartResize(
     timersRef.current = [];
   };
 
+  const chartAliveRef = useRef(true);
+
   const scheduleResize = (container: HTMLElement) => {
-    if (!chart) return;
+    if (!chart || !chartAliveRef.current) return;
     clearScheduled();
 
-    const run = () => syncChartSize(chart, container);
+    const run = () => {
+      if (!chartAliveRef.current) return;
+      syncChartSize(chart, container);
+    };
     run();
 
     timersRef.current.push(
@@ -62,9 +71,13 @@ export function useChartResize(
   // Persistent observers — keep connected across panel toggles.
   useEffect(() => {
     if (!chart || !containerRef.current) return;
+    chartAliveRef.current = true;
     const container = containerRef.current;
 
-    const onResize = () => syncChartSize(chart, container);
+    const onResize = () => {
+      if (!chartAliveRef.current) return;
+      syncChartSize(chart, container);
+    };
     onResize();
 
     const ro = new ResizeObserver(onResize);
@@ -87,6 +100,8 @@ export function useChartResize(
     });
 
     return () => {
+      chartAliveRef.current = false;
+      clearScheduled();
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
@@ -94,7 +109,7 @@ export function useChartResize(
 
   // Panel show/hide and divider drags settle one or more frames late.
   useLayoutEffect(() => {
-    if (!chart || !containerRef.current) return;
+    if (!chart || !containerRef.current || !chartAliveRef.current) return;
     scheduleResize(containerRef.current);
     return clearScheduled;
   }, [chart, containerRef, layoutKey, panelVisible, ticketCollapsed]);

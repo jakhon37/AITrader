@@ -107,6 +107,46 @@ export async function placeManualOrder(
   return res.json();
 }
 
+export async function cancelPendingOrder(orderId: string) {
+  const res = await fetch(`${API_BASE}/replay/order/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_id: orderId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to cancel pending order');
+  }
+  return res.json();
+}
+
+export async function modifyPendingOrder(
+  orderId: string,
+  side: string,
+  size: number,
+  entryPrice: number,
+  stopLoss?: number | null,
+  takeProfit?: number | null,
+) {
+  const res = await fetch(`${API_BASE}/replay/order/modify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      order_id: orderId,
+      side,
+      size,
+      entry_price: entryPrice,
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to modify pending order');
+  }
+  return res.json();
+}
+
 export async function closeManualPosition(instrument: string) {
   const res = await fetch(`${API_BASE}/replay/close`, {
     method: 'POST',
@@ -114,6 +154,43 @@ export async function closeManualPosition(instrument: string) {
     body: JSON.stringify({ instrument }),
   });
   if (!res.ok) throw new Error('Failed to close position');
+  return res.json();
+}
+
+export async function closePositionLeg(legId: string) {
+  const res = await fetch(`${API_BASE}/replay/close`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leg_id: legId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to close position leg');
+  }
+  return res.json();
+}
+
+export async function modifyOpenPosition(
+  legId: string,
+  stopLoss?: number | null,
+  takeProfit?: number | null,
+  options?: { clearSl?: boolean; clearTp?: boolean },
+) {
+  const res = await fetch(`${API_BASE}/replay/position/modify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      leg_id: legId,
+      stop_loss: stopLoss ?? null,
+      take_profit: takeProfit ?? null,
+      clear_sl: options?.clearSl ?? false,
+      clear_tp: options?.clearTp ?? false,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to update position');
+  }
   return res.json();
 }
 
@@ -126,6 +203,15 @@ export async function stopReplay() {
 export async function getReplayState() {
   const res = await fetch(`${API_BASE}/replay/state`);
   if (!res.ok) throw new Error('Failed to fetch replay state');
+  return res.json();
+}
+
+export async function getSessionAnalytics() {
+  const res = await fetch(`${API_BASE}/replay/analytics`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to fetch session analytics');
+  }
   return res.json();
 }
 

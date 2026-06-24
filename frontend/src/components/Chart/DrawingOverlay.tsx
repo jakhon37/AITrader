@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { Drawing } from './drawingTypes';
 import { getSettingsMenuPosition } from './drawingUtils';
@@ -35,6 +35,7 @@ interface DrawingOverlayProps {
   onUpdateSLPrice?: (price: number) => void;
   onUpdateTPPrice?: (price: number) => void;
   layoutKey?: number;
+  onPositionInteractionChange?: (active: boolean) => void;
 }
 
 export function DrawingOverlay({
@@ -66,6 +67,7 @@ export function DrawingOverlay({
   onUpdateSLPrice,
   onUpdateTPPrice,
   layoutKey = 0,
+  onPositionInteractionChange,
 }: DrawingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
@@ -136,6 +138,21 @@ export function DrawingOverlay({
     onUpdateSLPrice,
     onUpdateTPPrice,
   });
+
+  const positionInteracting = useMemo(() => {
+    if (activeTool === 'position' || (isDrawing && activeTool === 'position')) {
+      return true;
+    }
+    if (dragState?.drawingId) {
+      const d = drawings.find((item) => item.id === dragState.drawingId);
+      if (d?.type === 'position') return true;
+    }
+    return false;
+  }, [activeTool, isDrawing, dragState, drawings]);
+
+  useEffect(() => {
+    onPositionInteractionChange?.(positionInteracting);
+  }, [positionInteracting, onPositionInteractionChange]);
 
   // Effect: Render drawings onto canvas
   useEffect(() => {

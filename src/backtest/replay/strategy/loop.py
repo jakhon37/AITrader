@@ -136,15 +136,18 @@ class StrategyLoopMixin:
                 # 4. Build portfolio snapshot
                 open_positions = [
                     PositionSummary(
-                        instrument=inst,
-                        side=p["side"],
-                        size=p["size"],
-                        entry_price=p["entry_price"],
-                        current_price=p["current_price"],
-                        unrealized_pnl=exec_engine._calculate_pnl(p),
-                        open_since=p["entry_time"],
+                        instrument=leg["instrument"],
+                        side=leg["side"],
+                        size=leg["size"],
+                        entry_price=leg["entry_price"],
+                        current_price=leg["current_price"],
+                        unrealized_pnl=exec_engine._calculate_pnl(leg),
+                        open_since=leg["entry_time"],
+                        leg_id=leg_id,
+                        sl=leg.get("sl"),
+                        tp=leg.get("tp"),
                     )
-                    for inst, p in exec_engine.positions.items()
+                    for leg_id, leg in exec_engine.position_legs.items()
                 ]
                 portfolio = PortfolioState(
                     signal_id=bar.signal_id,

@@ -1,3 +1,5 @@
+import { roundPrice } from '../Replay/formatPrice';
+
 /** Minimum stop distance as % of entry — floor per timeframe so lines are visible on chart. */
 /** Minimum price-axis span when framing order lines (prevents over-zoom). */
 export const TIMEFRAME_VIEW_MIN_PCT: Record<string, number> = {
@@ -40,6 +42,7 @@ export function getOrderLevelDefaults(
   side: 'buy' | 'sell',
   entry: number,
   recentBars: BarRange[] = [],
+  instrument = 'EURUSD',
 ): { sl: number; tp: number; slDistance: number } {
   if (entry <= 0) {
     return { sl: 0, tp: 0, slDistance: 0 };
@@ -57,10 +60,13 @@ export function getOrderLevelDefaults(
 
   const tpDistance = slDistance * RR_RATIO;
 
+  const sl = side === 'buy' ? entry - slDistance : entry + slDistance;
+  const tp = side === 'buy' ? entry + tpDistance : entry - tpDistance;
+
   return {
     slDistance,
-    sl: side === 'buy' ? entry - slDistance : entry + slDistance,
-    tp: side === 'buy' ? entry + tpDistance : entry - tpDistance,
+    sl: roundPrice(sl, instrument),
+    tp: roundPrice(tp, instrument),
   };
 }
 
@@ -68,17 +74,21 @@ export function getTakeProfitFromStop(
   side: 'buy' | 'sell',
   entry: number,
   sl: number,
+  instrument = 'EURUSD',
 ): number {
   const slDistance = Math.abs(entry - sl);
-  return side === 'buy' ? entry + slDistance * RR_RATIO : entry - slDistance * RR_RATIO;
+  const tp = side === 'buy' ? entry + slDistance * RR_RATIO : entry - slDistance * RR_RATIO;
+  return roundPrice(tp, instrument);
 }
 
 export function getStopFromTakeProfit(
   side: 'buy' | 'sell',
   entry: number,
   tp: number,
+  instrument = 'EURUSD',
 ): number {
   const tpDistance = Math.abs(tp - entry);
   const slDistance = tpDistance / RR_RATIO;
-  return side === 'buy' ? entry - slDistance : entry + slDistance;
+  const sl = side === 'buy' ? entry - slDistance : entry + slDistance;
+  return roundPrice(sl, instrument);
 }

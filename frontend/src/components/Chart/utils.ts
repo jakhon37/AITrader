@@ -44,6 +44,14 @@ export interface OrderLinesViewContext {
  * Only zooms OUT if lines fall outside the current range — never zooms IN.
  * Caller must invoke only on focus-key bump, not while dragging lines.
  */
+function safePriceScaleOp(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // Chart or series may be disposed during rapid layout / session updates.
+  }
+}
+
 export function ensureOrderLinesInView(
   candleSeries: ISeriesApi<'Candlestick'>,
   prices: (number | null | undefined)[],
@@ -52,9 +60,15 @@ export function ensureOrderLinesInView(
   const active = prices.filter((p): p is number => p != null && p > 0);
   if (active.length < 2) return;
 
-  const scale = candleSeries.priceScale();
-  scale.setAutoScale(true);
-  const current = scale.getVisibleRange();
+  let scale;
+  let current;
+  try {
+    scale = candleSeries.priceScale();
+    safePriceScaleOp(() => scale.setAutoScale(true));
+    current = scale.getVisibleRange();
+  } catch {
+    return;
+  }
   if (!current) return;
 
   const orderMin = Math.min(...active);
@@ -80,17 +94,37 @@ export function ensureOrderLinesInView(
   if (span < minSpan) {
     const center = (orderMin + orderMax) / 2;
     span = minSpan;
-    scale.setAutoScale(false);
-    scale.setVisibleRange({ from: center - span / 2, to: center + span / 2 });
+    safePriceScaleOp(() => {
+      scale.setAutoScale(false);
+      scale.setVisibleRange({ from: center - span / 2, to: center + span / 2 });
+    });
     return;
   }
 
-  scale.setAutoScale(false);
-  scale.setVisibleRange({ from: unionMin, to: unionMax });
+  safePriceScaleOp(() => {
+    scale.setAutoScale(false);
+    scale.setVisibleRange({ from: unionMin, to: unionMax });
+  });
 }
 
 export function resetPriceScaleAuto(candleSeries: ISeriesApi<'Candlestick'>): void {
-  candleSeries.priceScale().setAutoScale(true);
+  safePriceScaleOp(() => candleSeries.priceScale().setAutoScale(true));
+}
+
+/** Lock the current Y-axis range so drawing tools don't fight auto-scale. */
+export function freezePriceScale(candleSeries: ISeriesApi<'Candlestick'>): void {
+  safePriceScaleOp(() => {
+    const scale = candleSeries.priceScale();
+    const range = scale.getVisibleRange();
+    scale.setAutoScale(false);
+    if (range) {
+      scale.setVisibleRange(range);
+    }
+  });
+}
+
+export function unfreezePriceScale(candleSeries: ISeriesApi<'Candlestick'>): void {
+  resetPriceScaleAuto(candleSeries);
 }
 
 export function applyChartViewport(

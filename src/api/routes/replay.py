@@ -35,7 +35,29 @@ class ManualOrderRequest(BaseModel):
 
 
 class ClosePositionRequest(BaseModel):
-    instrument: str = Field(..., json_schema_extra={"example": "EURUSD"})
+    instrument: Optional[str] = Field(None, json_schema_extra={"example": "EURUSD"})
+    leg_id: Optional[str] = Field(None, description="Close a single open position leg")
+
+
+class ModifyOpenPositionRequest(BaseModel):
+    leg_id: str = Field(..., description="Open position leg id (signal_id)")
+    stop_loss: Optional[float] = Field(None)
+    take_profit: Optional[float] = Field(None)
+    clear_sl: bool = Field(False)
+    clear_tp: bool = Field(False)
+
+
+class CancelPendingOrderRequest(BaseModel):
+    order_id: str = Field(..., description="Pending limit order id")
+
+
+class ModifyPendingOrderRequest(BaseModel):
+    order_id: str = Field(..., description="Pending limit order id")
+    side: str = Field(..., description="buy | sell")
+    size: float = Field(..., gt=0.0)
+    entry_price: float = Field(..., gt=0.0)
+    stop_loss: Optional[float] = Field(None)
+    take_profit: Optional[float] = Field(None)
 
 
 def parse_datetime(dt_str: str) -> datetime:
@@ -204,18 +226,101 @@ async def place_order(request: Request, body: ManualOrderRequest) -> Dict[str, A
         stop_loss=body.stop_loss,
         take_profit=body.take_profit,
     )
-    return {"status": "success", "order": order.model_dump(), "session": session.state.to_dict()}
+    exec_engine = getattr(session, "exec_engine", None)
+    if exec_engine is not None:
+        session.state.update(pending_orders=exec_engine.get_pending_orders_serializable())
+    return {
+        "status": "success",
+        "order": order.model_dump(mode="json"),
+        "session": session.state.to_dict(),
+    }
+
+
+@router.post("/order/cancel")
+async def cancel_pending_order(request: Request, body: CancelPendingOrderRequest) -> Dict[str, Any]:
+    """Cancel a pending limit order in the manual replay session."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+
+    if session.state.mode != "manual":
+        raise HTTPException(status_code=400, detail="Manual trades only supported in manual mode.")
+
+    cancelled = await session.cancel_pending_order(body.order_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail=f"Pending order not found: {body.order_id}")
+
+    return {"status": "success", "session": session.state.to_dict()}
+
+
+@router.post("/order/modify")
+async def modify_pending_order(request: Request, body: ModifyPendingOrderRequest) -> Dict[str, Any]:
+    """Modify a pending limit order (price, size, SL, TP)."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+
+    if session.state.mode != "manual":
+        raise HTTPException(status_code=400, detail="Manual trades only supported in manual mode.")
+
+    try:
+        side = OrderSide.BUY if body.side.lower() == "buy" else OrderSide.SELL
+    except Exception:
+        raise HTTPException(status_code=400, detail="Side must be 'buy' or 'sell'.")
+
+    updated = await session.modify_pending_order(
+        body.order_id,
+        side=side,
+        size=body.size,
+        entry_price=body.entry_price,
+        stop_loss=body.stop_loss,
+        take_profit=body.take_profit,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Pending order not found: {body.order_id}")
+
+    return {"status": "success", "session": session.state.to_dict()}
+
+
+@router.post("/position/modify")
+async def modify_open_position(request: Request, body: ModifyOpenPositionRequest) -> Dict[str, Any]:
+    """Modify SL/TP on an open position leg."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+
+    if session.state.mode != "manual":
+        raise HTTPException(status_code=400, detail="Manual trades only supported in manual mode.")
+
+    updated = await session.modify_open_leg(
+        body.leg_id,
+        stop_loss=body.stop_loss,
+        take_profit=body.take_profit,
+        clear_sl=body.clear_sl,
+        clear_tp=body.clear_tp,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Open position leg not found: {body.leg_id}")
+
+    return {"status": "success", "session": session.state.to_dict()}
 
 
 @router.post("/close")
 async def close_position(request: Request, body: ClosePositionRequest) -> Dict[str, Any]:
-    """Close position for an instrument in the manual replay session."""
+    """Close one leg or all legs for an instrument in the manual replay session."""
     session = getattr(request.app.state, "active_replay_session", None)
     if not session:
         raise HTTPException(status_code=400, detail="No active replay session.")
     
     if session.state.mode != "manual":
         raise HTTPException(status_code=400, detail="Manual trades only supported in manual mode.")
+
+    if body.leg_id:
+        order = await session.close_leg(body.leg_id)
+        return {"status": "success", "order": order.model_dump(), "session": session.state.to_dict()}
+
+    if not body.instrument:
+        raise HTTPException(status_code=400, detail="Provide leg_id or instrument.")
 
     try:
         inst = Instrument(body.instrument.upper())
@@ -298,6 +403,21 @@ async def change_indicators(request: Request, body: ChangeIndicatorsRequest) -> 
         raise HTTPException(status_code=400, detail=f"Failed to update indicator status: {e}")
         
     return {"status": "success", "session": session.state.to_dict()}
+
+
+@router.get("/analytics")
+async def get_session_analytics(request: Request) -> Dict[str, Any]:
+    """Return trade history metrics and equity curve for the active manual session."""
+    session = getattr(request.app.state, "active_replay_session", None)
+    if not session:
+        raise HTTPException(status_code=400, detail="No active replay session.")
+    if session.state.mode != "manual":
+        raise HTTPException(status_code=400, detail="Analytics only supported in manual mode.")
+    if not hasattr(session, "build_live_analytics"):
+        raise HTTPException(status_code=400, detail="Analytics not available for this session type.")
+
+    analytics = session.build_live_analytics()
+    return {"status": "success", "analytics": analytics}
 
 
 @router.get("/state")

@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLightweightChart, useChartDataStream, useChartResize } from './hooks';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
 import type { Drawing } from './drawingTypes';
-import { ensureOrderLinesInView, resetPriceScaleAuto, type ChartViewportMode, type OrderLinesViewContext } from './utils';
+import {
+  ensureOrderLinesInView,
+  freezePriceScale,
+  resetPriceScaleAuto,
+  unfreezePriceScale,
+  type ChartViewportMode,
+  type OrderLinesViewContext,
+} from './utils';
 
 interface Props {
   instrument: string;
@@ -221,9 +228,27 @@ export function CandleChart({
   });
 
   // Frame order lines once when orderLinesFocusKey bumps (enable SL/TP) — never on drag
+  const priceScaleFrozenRef = useRef(false);
+
+  const handlePositionInteractionChange = useCallback((active: boolean) => {
+    if (!candleSeries) return;
+    if (active && !priceScaleFrozenRef.current) {
+      freezePriceScale(candleSeries);
+      priceScaleFrozenRef.current = true;
+      return;
+    }
+    if (!active && priceScaleFrozenRef.current) {
+      unfreezePriceScale(candleSeries);
+      priceScaleFrozenRef.current = false;
+    }
+  }, [candleSeries]);
+
   const prevFocusKeyRef = useRef(0);
   useEffect(() => {
     if (!candleSeries || orderLinesFocusKey === 0 || orderLinesFocusKey === prevFocusKeyRef.current) {
+      return;
+    }
+    if (priceScaleFrozenRef.current) {
       return;
     }
     prevFocusKeyRef.current = orderLinesFocusKey;
@@ -231,16 +256,20 @@ export function CandleChart({
     const hasSlOrTp =
       (slLinePrice != null && slLinePrice > 0) ||
       (tpLinePrice != null && tpLinePrice > 0);
-    if (!hasSlOrTp) {
-      resetPriceScaleAuto(candleSeries);
-      return;
+    try {
+      if (!hasSlOrTp) {
+        resetPriceScaleAuto(candleSeries);
+        return;
+      }
+      ensureOrderLinesInView(
+        candleSeries,
+        [entryLinePrice, slLinePrice, tpLinePrice],
+        recentCandleRange,
+      );
+    } catch {
+      // Ignore disposed chart during session updates.
     }
-    ensureOrderLinesInView(
-      candleSeries,
-      [entryLinePrice, slLinePrice, tpLinePrice],
-      recentCandleRange,
-    );
-  }, [candleSeries, orderLinesFocusKey]);
+  }, [candleSeries, orderLinesFocusKey, slLinePrice, tpLinePrice, entryLinePrice, recentCandleRange]);
 
   // Restore candle auto-scale only when SL/TP are turned off
   const hadSlOrTpRef = useRef(false);
@@ -326,6 +355,7 @@ export function CandleChart({
             onUpdateSLPrice={onUpdateSLPrice}
             onUpdateTPPrice={onUpdateTPPrice}
             layoutKey={layoutKey}
+            onPositionInteractionChange={handlePositionInteractionChange}
           />
         )}
       </div>

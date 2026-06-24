@@ -35,6 +35,7 @@ class ReplaySessionState:
         self._calculate_indicators = calculate_indicators
         self._open_positions: List[PositionSummary] = []
         self._trade_history: List[Order] = []
+        self._pending_orders: List[dict[str, Any]] = []
         self._current_portfolio: Optional[PortfolioState] = None
 
     def update(self, **kwargs: Any) -> None:
@@ -96,6 +97,11 @@ class ReplaySessionState:
             return list(self._trade_history)
 
     @property
+    def pending_orders(self) -> List[dict[str, Any]]:
+        with self._lock:
+            return list(self._pending_orders)
+
+    @property
     def current_portfolio(self) -> Optional[PortfolioState]:
         with self._lock:
             return self._current_portfolio
@@ -129,5 +135,6 @@ class ReplaySessionState:
                     }
                     for o in self._trade_history
                 ],
+                "pending_orders": list(self._pending_orders),
                 "current_portfolio": json.loads(self._current_portfolio.model_dump_json()) if self._current_portfolio else None,
             }
