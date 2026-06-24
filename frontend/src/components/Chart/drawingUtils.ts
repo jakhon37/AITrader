@@ -136,13 +136,21 @@ export const isNearAnyHandle = (
   return false;
 };
 
+export type SettingsMenuPlacement = 'above' | 'below';
+export type DropdownDirection = 'up' | 'down';
+
+const MENU_BAR_HEIGHT = 40;
+const DROPDOWN_MAX_HEIGHT = 170;
+const MENU_EDGE_MARGIN = 10;
+
 // Calculate coordinates for floating settings menu
 export const getSettingsMenuPosition = (
   selectedDrawingId: string | null,
   drawings: Drawing[],
   mapPointToPixels: (pt: Point) => { x: number | null; y: number | null },
-  canvasWidth: number
-): { top: number; left: number } | null => {
+  canvasWidth: number,
+  canvasHeight: number,
+): { top: number; left: number; placement: SettingsMenuPlacement; dropdownDirection: DropdownDirection } | null => {
   if (!selectedDrawingId) return null;
   const drawing = drawings.find((d) => d.id === selectedDrawingId);
   if (!drawing || drawing.points.length === 0) return null;
@@ -164,9 +172,33 @@ export const getSettingsMenuPosition = (
 
   if (minX === Infinity || minY === Infinity) return null;
 
-  const menuHeight = 55;
-  const top = minY - menuHeight > 15 ? minY - menuHeight : maxY + 15;
+  const spaceAbove = minY - MENU_EDGE_MARGIN;
+  const spaceBelow = canvasHeight - maxY - MENU_EDGE_MARGIN;
+  const minAbove = MENU_BAR_HEIGHT + DROPDOWN_MAX_HEIGHT;
+  const minBelow = MENU_BAR_HEIGHT + 8;
+
+  let placement: SettingsMenuPlacement;
+  if (spaceAbove >= minAbove && spaceAbove >= spaceBelow) {
+    placement = 'above';
+  } else if (spaceBelow >= minBelow) {
+    placement = 'below';
+  } else if (spaceBelow >= spaceAbove) {
+    placement = 'below';
+  } else {
+    placement = 'above';
+  }
+
+  const top =
+    placement === 'above'
+      ? Math.max(MENU_EDGE_MARGIN, minY - MENU_BAR_HEIGHT - 8)
+      : Math.min(canvasHeight - MENU_BAR_HEIGHT - MENU_EDGE_MARGIN, maxY + 8);
+
   const left = Math.max(10, Math.min(canvasWidth - 320, (minX + maxX) / 2 - 160));
 
-  return { top, left };
+  const spaceAboveMenu = top - MENU_EDGE_MARGIN;
+  const spaceBelowMenu = canvasHeight - top - MENU_BAR_HEIGHT - MENU_EDGE_MARGIN;
+  const dropdownDirection: DropdownDirection =
+    spaceAboveMenu >= DROPDOWN_MAX_HEIGHT && spaceAboveMenu >= spaceBelowMenu ? 'up' : 'down';
+
+  return { top, left, placement, dropdownDirection };
 };

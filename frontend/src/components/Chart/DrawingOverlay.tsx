@@ -288,13 +288,30 @@ export function DrawingOverlay({
     (tpLinePrice != null && tpLinePrice > 0);
 
   const selectedDrawing = drawings.find((d) => d.id === selectedDrawingId);
-  const menuPos = getSettingsMenuPosition(selectedDrawingId, drawings, mapPointToPixels, position.width);
+  const menuPos = getSettingsMenuPosition(
+    selectedDrawingId,
+    drawings,
+    mapPointToPixels,
+    position.width,
+    position.height,
+  );
 
   const orderLineActive =
     hoveredOrderLine !== null || (dragState?.type === 'order_line');
 
   return (
-    <>
+    <div
+      style={{
+        position: 'absolute',
+        left: `${position.left}px`,
+        top: `${position.top}px`,
+        width: `${position.width}px`,
+        height: `${position.height}px`,
+        overflow: 'visible',
+        pointerEvents: 'none',
+        zIndex: 999999,
+      }}
+    >
       <canvas
         ref={canvasRef}
         width={position.width}
@@ -305,11 +322,9 @@ export function DrawingOverlay({
         onDoubleClick={handleDoubleClick}
         style={{
           position: 'absolute',
-          left: `${position.left}px`,
-          top: `${position.top}px`,
-          width: `${position.width}px`,
-          height: `${position.height}px`,
-          zIndex: 999999, // Render on top of the entire chart widget
+          inset: 0,
+          width: '100%',
+          height: '100%',
           pointerEvents: activeTool === 'select'
             ? (isHoveringDrawing || isHoveringHandle || orderLineActive || (hasOrderLines && dragState !== null) ? 'auto' : 'none')
             : 'auto',
@@ -322,7 +337,8 @@ export function DrawingOverlay({
       {activeTool === 'select' && selectedDrawing && menuPos && (
         <DrawingSettingsMenu
           selectedDrawing={selectedDrawing}
-          position={menuPos}
+          position={{ top: menuPos.top, left: menuPos.left }}
+          dropdownDirection={menuPos.dropdownDirection}
           onUpdateColor={onUpdateColor}
           onUpdateLineWidth={onUpdateLineWidth}
           onUpdateFill={onUpdateFill}
@@ -335,6 +351,6 @@ export function DrawingOverlay({
           }}
         />
       )}
-    </>
+    </div>
   );
 }

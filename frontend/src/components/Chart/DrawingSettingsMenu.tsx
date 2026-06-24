@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Trash2, ChevronDown, Plus, X } from 'lucide-react';
 import type { Drawing } from './drawingTypes';
+import type { DropdownDirection } from './drawingUtils';
 
 interface DrawingSettingsMenuProps {
   selectedDrawing: Drawing;
   position: { top: number; left: number };
+  dropdownDirection: DropdownDirection;
   onUpdateColor: (color: string) => void;
   onUpdateLineWidth: (width: number) => void;
   onUpdateFill: (fill: boolean) => void;
@@ -14,9 +16,26 @@ interface DrawingSettingsMenuProps {
   onDelete: () => void;
 }
 
+const DROPDOWN_PANEL_BASE: CSSProperties = {
+  position: 'absolute',
+  left: 0,
+  background: 'rgba(14, 20, 32, 0.95)',
+  border: '1px solid var(--border-glow)',
+  borderRadius: '8px',
+  boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+  zIndex: 1000002,
+};
+
+function dropdownPanelStyle(direction: DropdownDirection): CSSProperties {
+  return direction === 'down'
+    ? { ...DROPDOWN_PANEL_BASE, top: 'calc(100% + 8px)' }
+    : { ...DROPDOWN_PANEL_BASE, bottom: 'calc(100% + 8px)' };
+}
+
 export function DrawingSettingsMenu({
   selectedDrawing,
   position,
+  dropdownDirection,
   onUpdateColor,
   onUpdateLineWidth,
   onUpdateFill,
@@ -118,18 +137,11 @@ export function DrawingSettingsMenu({
         {activeDropdown === 'color' && (
           <div
             style={{
-              position: 'absolute',
-              bottom: 'calc(100% + 8px)',
-              left: '0',
-              background: 'rgba(14, 20, 32, 0.95)',
-              border: '1px solid var(--border-glow)',
-              borderRadius: '8px',
+              ...dropdownPanelStyle(dropdownDirection),
               padding: '10px',
               display: 'grid',
               gridTemplateColumns: 'repeat(5, 1fr)',
               gap: '8px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              zIndex: 1000002,
             }}
           >
             {colors.map((c) => (
@@ -183,19 +195,12 @@ export function DrawingSettingsMenu({
         {activeDropdown === 'width' && (
           <div
             style={{
-              position: 'absolute',
-              bottom: 'calc(100% + 8px)',
-              left: '0',
-              background: 'rgba(14, 20, 32, 0.95)',
-              border: '1px solid var(--border-glow)',
-              borderRadius: '8px',
+              ...dropdownPanelStyle(dropdownDirection),
               padding: '6px',
               display: 'flex',
               flexDirection: 'column',
               gap: '4px',
               width: '80px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              zIndex: 1000002,
             }}
           >
             {[1, 2, 3, 4].map((w) => {
@@ -270,19 +275,12 @@ export function DrawingSettingsMenu({
         {activeDropdown === 'opacity' && (
           <div
             style={{
-              position: 'absolute',
-              bottom: 'calc(100% + 8px)',
-              left: '0',
-              background: 'rgba(14, 20, 32, 0.95)',
-              border: '1px solid var(--border-glow)',
-              borderRadius: '8px',
+              ...dropdownPanelStyle(dropdownDirection),
               padding: '10px 12px',
               display: 'flex',
               flexDirection: 'column',
               gap: '8px',
               width: '120px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              zIndex: 1000002,
             }}
           >
             <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>Opacity: {Math.round(selectedDrawing.opacity * 100)}%</div>
@@ -350,19 +348,12 @@ export function DrawingSettingsMenu({
           {activeDropdown === 'options' && (
             <div
               style={{
-                position: 'absolute',
-                bottom: 'calc(100% + 8px)',
-                left: '0',
-                background: 'rgba(14, 20, 32, 0.95)',
-                border: '1px solid var(--border-glow)',
-                borderRadius: '8px',
+                ...dropdownPanelStyle(dropdownDirection),
                 padding: '10px 12px',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '8px',
                 width: '120px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-                zIndex: 1000002,
               }}
             >
               {/* Shading Toggle */}
@@ -444,19 +435,12 @@ export function DrawingSettingsMenu({
           {activeDropdown === 'levels' && (
             <div
               style={{
-                position: 'absolute',
-                bottom: 'calc(100% + 8px)',
-                left: '0',
-                background: 'rgba(14, 20, 32, 0.95)',
-                border: '1px solid var(--border-glow)',
-                borderRadius: '8px',
+                ...dropdownPanelStyle(dropdownDirection),
                 padding: '10px 12px',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '8px',
                 width: '180px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-                zIndex: 1000002,
               }}
             >
               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-primary)' }}>Ratios Levels</span>

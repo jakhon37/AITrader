@@ -323,7 +323,7 @@ export function CandleChart({
       />
 
       {/* Chart container */}
-      <div style={{ flex: 1, position: 'relative', height: '100%' }}>
+      <div style={{ flex: 1, position: 'relative', height: '100%', overflow: 'visible' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
         {chart && candleSeries && (
           <DrawingOverlay
