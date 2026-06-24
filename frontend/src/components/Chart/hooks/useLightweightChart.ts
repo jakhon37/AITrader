@@ -14,8 +14,9 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
     if (!containerRef.current) return;
 
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth || 600,
-      height: containerRef.current.clientHeight || 380,
+      width: containerRef.current.clientWidth || 1,
+      height: containerRef.current.clientHeight || 1,
+      autoSize: false,
       layout: { background: { color: '#0d1322' }, textColor: '#8e9bb4' },
       grid: {
         vertLines: { visible: false },
@@ -42,16 +43,7 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
 
     setChartState({ chart, candleSeries, volumeSeries });
 
-    // Resize observer
-    const ro = new ResizeObserver((entries) => {
-      if (!chart || !entries[0]) return;
-      const { width, height } = entries[0].contentRect;
-      chart.resize(width, height);
-    });
-    ro.observe(containerRef.current);
-
     return () => {
-      ro.disconnect();
       try { chart.remove(); } catch { /* ignore */ }
       setChartState({ chart: null, candleSeries: null, volumeSeries: null });
     };

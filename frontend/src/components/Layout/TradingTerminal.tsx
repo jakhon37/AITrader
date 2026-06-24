@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Header } from './Header';
 import { CandleChart } from '../Chart/CandleChart';
+import { ChartViewportToggle } from '../Chart/ChartViewportToggle';
+import type { ChartViewportMode } from '../Chart/utils';
 import { IndicatorPanel } from '../Chart/IndicatorPanel';
 import { FusionPanel } from '../Panels/FusionPanel';
 import { NewsFeed } from '../Panels/NewsFeed';
@@ -18,6 +20,10 @@ interface TradingTerminalProps {
 export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   const [instrument, setInstrument] = useState('EURUSD');
   const [timeframe, setTimeframe] = useState('1h');
+  const [chartViewportMode, setChartViewportMode] = useState<ChartViewportMode>(() => {
+    const saved = localStorage.getItem('terminal_chart_viewport');
+    return saved === 'fit-all' ? 'fit-all' : 'auto';
+  });
   const connected = useSignalsStore((state) => state.wsConnected);
   usePortfolio();
 
@@ -220,11 +226,22 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
         }}>
           {/* Chart (Row 1) - Fills remaining space dynamically */}
           <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>{instrument} · {timeframe}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{instrument} · {timeframe}</span>
+                <ChartViewportToggle
+                  mode={chartViewportMode}
+                  onChange={(mode) => {
+                    setChartViewportMode(mode);
+                    localStorage.setItem('terminal_chart_viewport', mode);
+                  }}
+                />
+              </div>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Real-time chart</span>
             </div>
-            <div style={{ flex: 1, overflow: 'hidden' }}><CandleChart instrument={instrument} timeframe={timeframe} /></div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <CandleChart instrument={instrument} timeframe={timeframe} viewportMode={chartViewportMode} />
+            </div>
           </div>
 
           {/* Divider 1 */}

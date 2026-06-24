@@ -4,3 +4,4 @@ export { useChartScrolling } from './useChartScrolling';
 export { useChartWebSocket } from './useChartWebSocket';
 export { useCanvasPosition } from './useCanvasPosition';
 export { useDrawingInteractions } from './useDrawingInteractions';
+export { useChartResize } from './useChartResize';

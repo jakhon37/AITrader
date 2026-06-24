@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLightweightChart, useChartDataStream } from './hooks';
+import { useLightweightChart, useChartDataStream, useChartResize } from './hooks';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
 import type { Drawing } from './drawingTypes';
+import { ensureOrderLinesInView, resetPriceScaleAuto, type ChartViewportMode, type OrderLinesViewContext } from './utils';
 
 interface Props {
   instrument: string;
@@ -18,6 +19,19 @@ interface Props {
   onUpdateTPPrice?: (price: number) => void;
   /** Increment to clear position-tool drafts from the chart after order execution. */
   orderDraftKey?: number;
+  /** Auto-zoom to a sensible bar count on load / timeframe change. Default: auto. */
+  viewportMode?: ChartViewportMode;
+  /** Increment to frame entry/SL/TP once (on enable). Does not refit while dragging. */
+  orderLinesFocusKey?: number;
+  recentCandleRange?: OrderLinesViewContext;
+  /** Bump when surrounding panels resize so the chart refits its width/price axis. */
+  layoutKey?: number;
+  /** Optional outer panel element to observe for flex-column width changes. */
+  panelRef?: React.RefObject<HTMLElement | null>;
+  /** Flex row wrapper — width changes when side panels show/hide. */
+  layoutRowRef?: React.RefObject<HTMLElement | null>;
+  panelVisible?: boolean;
+  ticketCollapsed?: boolean;
 }
 
 export function CandleChart({
@@ -33,6 +47,14 @@ export function CandleChart({
   onUpdateSLPrice,
   onUpdateTPPrice,
   orderDraftKey = 0,
+  viewportMode = 'auto',
+  orderLinesFocusKey = 0,
+  recentCandleRange,
+  layoutKey = 0,
+  panelRef,
+  layoutRowRef,
+  panelVisible = true,
+  ticketCollapsed = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeTool, setActiveTool] = useState<'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci'>('select');
@@ -181,6 +203,13 @@ export function CandleChart({
   
   // Custom hook to initialize lightweight-chart canvas and series, and handle resize observer
   const { chart, candleSeries, volumeSeries } = useLightweightChart(containerRef);
+  useChartResize(chart, containerRef, {
+    layoutKey,
+    panelRef,
+    layoutRowRef,
+    panelVisible,
+    ticketCollapsed,
+  });
 
   // Custom hook to handle initial fetch, pagination, window scroll events, and websocket/replay feeds
   useChartDataStream(chart, candleSeries, volumeSeries, {
@@ -188,7 +217,43 @@ export function CandleChart({
     timeframe,
     onNewBar,
     virtualEndTime,
+    viewportMode,
   });
+
+  // Frame order lines once when orderLinesFocusKey bumps (enable SL/TP) — never on drag
+  const prevFocusKeyRef = useRef(0);
+  useEffect(() => {
+    if (!candleSeries || orderLinesFocusKey === 0 || orderLinesFocusKey === prevFocusKeyRef.current) {
+      return;
+    }
+    prevFocusKeyRef.current = orderLinesFocusKey;
+
+    const hasSlOrTp =
+      (slLinePrice != null && slLinePrice > 0) ||
+      (tpLinePrice != null && tpLinePrice > 0);
+    if (!hasSlOrTp) {
+      resetPriceScaleAuto(candleSeries);
+      return;
+    }
+    ensureOrderLinesInView(
+      candleSeries,
+      [entryLinePrice, slLinePrice, tpLinePrice],
+      recentCandleRange,
+    );
+  }, [candleSeries, orderLinesFocusKey]);
+
+  // Restore candle auto-scale only when SL/TP are turned off
+  const hadSlOrTpRef = useRef(false);
+  useEffect(() => {
+    if (!candleSeries) return;
+    const hasSlOrTp =
+      (slLinePrice != null && slLinePrice > 0) ||
+      (tpLinePrice != null && tpLinePrice > 0);
+    if (hadSlOrTpRef.current && !hasSlOrTp) {
+      resetPriceScaleAuto(candleSeries);
+    }
+    hadSlOrTpRef.current = hasSlOrTp;
+  }, [candleSeries, slLinePrice, tpLinePrice]);
 
   // Clear position-tool drawings when parent signals order draft was executed
   useEffect(() => {
@@ -260,6 +325,7 @@ export function CandleChart({
             onUpdateEntryPrice={onUpdateEntryPrice}
             onUpdateSLPrice={onUpdateSLPrice}
             onUpdateTPPrice={onUpdateTPPrice}
+            layoutKey={layoutKey}
           />
         )}
       </div>

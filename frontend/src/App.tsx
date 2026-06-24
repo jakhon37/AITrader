@@ -3,11 +3,14 @@ import { Sidebar } from './components/Layout/Sidebar';
 import { TradingTerminal } from './components/Layout/TradingTerminal';
 import { ReplayPage } from './components/Replay/ReplayPage';
 import { useWebSocket } from './hooks/useWebSocket';
+import { useBackendHealth } from './hooks/useBackendHealth';
+import { BackendOfflineBanner } from './components/Layout/BackendOfflineBanner';
 import { useState } from 'react';
 import { Menu } from 'lucide-react';
 
 export default function App() {
   useWebSocket();
+  const apiOnline = useBackendHealth();
   const [sidebarHidden, setSidebarHidden] = useState(() => {
     const saved = localStorage.getItem('sidebar_hidden');
     return saved === 'true';
@@ -35,6 +38,7 @@ export default function App() {
     >
       <Sidebar isHidden={sidebarHidden} onToggle={handleToggleSidebar} />
       <main style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        <BackendOfflineBanner visible={apiOnline === false} />
         {sidebarHidden && (
           <button
             onClick={handleToggleSidebar}

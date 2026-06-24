@@ -13,39 +13,29 @@ export function useCanvasPosition(
   useEffect(() => {
     if (!containerRef.current) return;
 
-    let intervalId: any = null;
-
     const updatePosition = () => {
       const cell = containerRef.current?.querySelector('canvas');
       const cellElement = cell?.parentElement;
       if (cellElement) {
         const cellRect = cellElement.getBoundingClientRect();
         const containerRect = containerRef.current!.getBoundingClientRect();
-        
+
         setPosition({
           left: cellRect.left - containerRect.left,
           top: cellRect.top - containerRect.top,
           width: cellRect.width,
           height: cellRect.height,
         });
-
-        // Stop polling once the cell has a valid non-zero size
-        if (cellRect.width > 0 && cellRect.height > 0 && intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
       }
     };
 
     updatePosition();
-    intervalId = setInterval(updatePosition, 100);
 
     const ro = new ResizeObserver(updatePosition);
     ro.observe(containerRef.current);
 
     window.addEventListener('resize', updatePosition);
     return () => {
-      if (intervalId) clearInterval(intervalId);
       ro.disconnect();
       window.removeEventListener('resize', updatePosition);
     };

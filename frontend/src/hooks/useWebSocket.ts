@@ -104,9 +104,15 @@ export function useWebSocket() {
     connect();
     return () => {
       isMounted.current = false;
-      wsRef.current?.close();
+      const ws = wsRef.current;
+      if (!ws) return;
+      ws.onclose = null;
+      ws.onerror = null;
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
     };
-  }, [addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setPortfolio]);
+  }, [addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setPortfolio, setWsConnected]);
 
   return { connected, ws: wsRef };
 }

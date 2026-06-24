@@ -34,6 +34,7 @@ interface DrawingOverlayProps {
   onUpdateEntryPrice?: (price: number) => void;
   onUpdateSLPrice?: (price: number) => void;
   onUpdateTPPrice?: (price: number) => void;
+  layoutKey?: number;
 }
 
 export function DrawingOverlay({
@@ -64,9 +65,14 @@ export function DrawingOverlay({
   onUpdateEntryPrice,
   onUpdateSLPrice,
   onUpdateTPPrice,
+  layoutKey = 0,
 }: DrawingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
+
+  useEffect(() => {
+    if (layoutKey > 0) setRangeChangeKey((prev) => prev + 1);
+  }, [layoutKey]);
 
   // Hook 1: Layout alignment & Coordinate projection
   const { position, mapPointToPixels, mapPixelsToPoint, mapPixelToPrice, mapPriceToY } = useCanvasPosition(
@@ -196,7 +202,7 @@ export function DrawingOverlay({
     // Draw active order lines (Limit Entry, Stop Loss, Take Profit)
     const drawOrderLine = (price: number, color: string, label: string) => {
       const y = candleSeries.priceToCoordinate(price);
-      if (y === null || y < 0 || y > position.height) return;
+      if (y === null) return;
 
       ctx.save();
       // Draw horizontal dashed line

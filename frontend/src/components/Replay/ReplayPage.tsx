@@ -12,6 +12,16 @@ import {
   changeReplayIndicators
 } from '../../api/client';
 import { CandleChart } from '../Chart/CandleChart';
+import { ChartViewportToggle } from '../Chart/ChartViewportToggle';
+import type { ChartViewportMode } from '../Chart/utils';
+import {
+  getOrderLevelDefaults,
+  getStopFromTakeProfit,
+  getTakeProfitFromStop,
+  TIMEFRAME_VIEW_MIN_PCT,
+  type BarRange,
+} from '../Chart/orderDefaults';
+import type { OrderLinesViewContext } from '../Chart/utils';
 import { ReplayConfig } from './components/ReplayConfig';
 import { PerformanceScorecard } from './components/PerformanceScorecard';
 import { ActiveSessionHeader } from './components/ActiveSessionHeader';
@@ -53,11 +63,19 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const [tpEnabled, setTpEnabled] = useState(false);
   const [tpPrice, setTpPrice] = useState<number>(0);
   const [orderDraftKey, setOrderDraftKey] = useState(0);
+  const [orderLinesFocusKey, setOrderLinesFocusKey] = useState(0);
+  const [recentCandleRange, setRecentCandleRange] = useState<OrderLinesViewContext | null>(null);
+  const [currentBarClose, setCurrentBarClose] = useState(0);
+  const [chartViewportMode, setChartViewportMode] = useState<ChartViewportMode>(() => {
+    const saved = localStorage.getItem('replay_chart_viewport');
+    return saved === 'fit-all' ? 'fit-all' : 'auto';
+  });
 
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
 
   // Auto Scroll Refs
   const tradeLogEndRef = useRef<HTMLDivElement>(null);
+  const recentBarsRef = useRef<BarRange[]>([]);
 
   // Resize and Toggle panel states
   const [rightHidden, setRightHidden] = useState(() => {
@@ -69,6 +87,9 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const [ticketCollapsed, setTicketCollapsed] = useState(() => {
     return localStorage.getItem('replay_ticket_collapsed') === 'true';
   });
+  const [chartLayoutKey, setChartLayoutKey] = useState(0);
+  const chartPanelRef = useRef<HTMLDivElement>(null);
+  const layoutRowRef = useRef<HTMLDivElement>(null);
 
   const handleToggleTicketCollapsed = (collapsed: boolean) => {
     setTicketCollapsed(collapsed);
@@ -100,6 +121,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     const onMouseUp = () => {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      setChartLayoutKey((k) => k + 1);
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -158,34 +180,46 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  // Check state on load
+  // Restore active replay session once backend is reachable
   useEffect(() => {
-    getReplayState()
-      .then((res) => {
-        if (res.status === 'active') {
-          setIsActive(true);
-          setMode(res.session.mode);
-          setStatus(res.session.status);
-          setInstrument(res.session.instrument);
-          if (res.session.timeframe) {
-            setTimeframe(res.session.timeframe);
-          }
-          setSpeed(res.session.speed);
-          setCurrentTime(res.session.current_time);
-          setSessionState(res.session);
-          if (res.session.calculate_indicators !== undefined) {
-            setCalculateIndicators(res.session.calculate_indicators);
-          }
+    let cancelled = false;
+
+    const restore = async () => {
+      try {
+        const res = await getReplayState();
+        if (cancelled || res.status !== 'active') return;
+        setIsActive(true);
+        setMode(res.session.mode);
+        setStatus(res.session.status);
+        setInstrument(res.session.instrument);
+        if (res.session.timeframe) {
+          setTimeframe(res.session.timeframe);
         }
-      })
-      .catch((err) => console.error('Failed to restore replay state:', err));
+        setSpeed(res.session.speed);
+        setCurrentTime(res.session.current_time);
+        setSessionState(res.session);
+        if (res.session.calculate_indicators !== undefined) {
+          setCalculateIndicators(res.session.calculate_indicators);
+        }
+      } catch {
+        // Backend banner handles offline state; avoid noisy console errors on startup
+      }
+    };
+
+    restore();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Listen for real-time WebSocket frames via custom event
   useEffect(() => {
     const handleReplayFrame = (e: Event) => {
       const customEvent = e as CustomEvent<any>;
-      const { session_state } = customEvent.detail;
+      const { session_state, bar } = customEvent.detail;
+      if (bar?.close) {
+        setCurrentBarClose(bar.close);
+      }
       if (session_state) {
         setSessionState(session_state);
         setStatus(session_state.status);
@@ -222,7 +256,20 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     setSlPrice(0);
     setTpEnabled(false);
     setTpPrice(0);
+    recentBarsRef.current = [];
+    setRecentCandleRange(null);
   }, [instrument, isActive]);
+
+  // Re-space SL/TP when timeframe changes so levels stay visible on the new scale
+  useEffect(() => {
+    const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
+    if (entry <= 0 || (!slEnabled && !tpEnabled)) return;
+    const { sl, tp } = getDefaults(orderSide, entry);
+    if (slEnabled) setSlPrice(sl);
+    if (tpEnabled) setTpPrice(tp);
+    updateRecentCandleRange(recentBarsRef.current, entry);
+    bumpOrderLinesFocus();
+  }, [timeframe]);
 
   const handleStart = async () => {
     setErrorMsg(null);
@@ -305,21 +352,42 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     }
   };
 
-  const currentClosePrice = sessionState?.current_bar?.close || 0;
+  const currentClosePrice = currentBarClose || 0;
 
-  const getDefaults = (side: 'buy' | 'sell', entry: number) => {
-    // 0.2% for SL, 0.6% for TP (1:3 ratio)
-    const slOffset = entry * 0.002;
-    const tpOffset = entry * 0.006;
-    return {
-      sl: side === 'buy' ? entry - slOffset : entry + slOffset,
-      tp: side === 'buy' ? entry + tpOffset : entry - tpOffset,
-    };
+  // Fill limit entry with live replay price once bars start arriving
+  useEffect(() => {
+    if (presetEnabled && presetEntryPrice <= 0 && currentClosePrice > 0) {
+      setPresetEntryPrice(currentClosePrice);
+    }
+  }, [presetEnabled, presetEntryPrice, currentClosePrice]);
+
+  const handleChartViewportChange = (mode: ChartViewportMode) => {
+    setChartViewportMode(mode);
+    localStorage.setItem('replay_chart_viewport', mode);
+  };
+
+  const getDefaults = (side: 'buy' | 'sell', entry: number) =>
+    getOrderLevelDefaults(timeframe, side, entry, recentBarsRef.current);
+
+  const bumpOrderLinesFocus = () => setOrderLinesFocusKey((k) => k + 1);
+
+  const updateRecentCandleRange = (bars: BarRange[], entry: number) => {
+    if (bars.length < 3) {
+      setRecentCandleRange({ entry, minSpanPct: TIMEFRAME_VIEW_MIN_PCT[timeframe] ?? 0.012 });
+      return;
+    }
+    const slice = bars.slice(-40);
+    setRecentCandleRange({
+      candleLow: Math.min(...slice.map((b) => b.low)),
+      candleHigh: Math.max(...slice.map((b) => b.high)),
+      entry,
+      minSpanPct: TIMEFRAME_VIEW_MIN_PCT[timeframe] ?? 0.012,
+    });
   };
 
   const handleTogglePreset = (enabled: boolean) => {
     setPresetEnabled(enabled);
-    if (enabled) {
+    if (enabled && currentClosePrice > 0) {
       setPresetEntryPrice(currentClosePrice);
     }
   };
@@ -328,8 +396,13 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     setSlEnabled(enabled);
     if (enabled) {
       const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
-      const { sl } = getDefaults(orderSide, entry);
-      setSlPrice(sl);
+      if (tpEnabled && tpPrice > 0 && entry > 0) {
+        setSlPrice(getStopFromTakeProfit(orderSide, entry, tpPrice));
+      } else {
+        const { sl } = getDefaults(orderSide, entry);
+        setSlPrice(sl);
+      }
+      bumpOrderLinesFocus();
     }
   };
 
@@ -337,8 +410,13 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     setTpEnabled(enabled);
     if (enabled) {
       const entry = presetEnabled ? presetEntryPrice : currentClosePrice;
-      const { tp } = getDefaults(orderSide, entry);
-      setTpPrice(tp);
+      if (slEnabled && slPrice > 0 && entry > 0) {
+        setTpPrice(getTakeProfitFromStop(orderSide, entry, slPrice));
+      } else {
+        const { tp } = getDefaults(orderSide, entry);
+        setTpPrice(tp);
+      }
+      bumpOrderLinesFocus();
     }
   };
 
@@ -358,8 +436,10 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
       setSlPrice(pos.sl);
       setTpEnabled(true);
       setTpPrice(pos.tp);
+      updateRecentCandleRange(recentBarsRef.current, pos.entry);
+      bumpOrderLinesFocus();
     }
-  }, []);
+  }, [timeframe]);
 
   const clearOrderDraft = useCallback(() => {
     setPresetEnabled(false);
@@ -505,25 +585,31 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
         onToggleRightPanel={handleToggleRightPanel}
       />
 
-      <div style={{ 
-        display: 'flex', 
-        padding: 12, 
-        overflow: 'hidden', 
+      <div
+        ref={layoutRowRef}
+        style={{
+        display: 'flex',
+        padding: 12,
+        overflow: 'hidden',
         height: 'calc(100vh - 56px)',
         boxSizing: 'border-box',
         width: '100%',
-        gap: 0
+        gap: 0,
       }}>
         {/* Left: Chart */}
-        <div className="glass-panel" style={{
-          width: rightHidden ? '100%' : `${leftWidth}%`,
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          padding: 12,
-          overflow: 'hidden',
-          boxSizing: 'border-box'
-        }}>
+        <div
+          ref={chartPanelRef}
+          className="glass-panel"
+          style={{
+            flex: rightHidden ? '1 1 auto' : `0 0 ${leftWidth}%`,
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            padding: 12,
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <span style={{ fontWeight: 700, fontSize: 14, color: '#fff' }}>{instrument}</span>
@@ -548,6 +634,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
                   </button>
                 ))}
               </div>
+              <ChartViewportToggle mode={chartViewportMode} onChange={handleChartViewportChange} />
             </div>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Historical Simulation</span>
           </div>
@@ -556,6 +643,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
               instrument={instrument}
               timeframe={timeframe}
               virtualEndTime={currentTime || undefined}
+              viewportMode={chartViewportMode}
               entryLinePrice={presetEnabled ? presetEntryPrice : null}
               slLinePrice={slEnabled ? slPrice : null}
               tpLinePrice={tpEnabled ? tpPrice : null}
@@ -564,26 +652,54 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
               onUpdateSLPrice={setSlPrice}
               onUpdateTPPrice={setTpPrice}
               orderDraftKey={orderDraftKey}
+              orderLinesFocusKey={orderLinesFocusKey}
+              recentCandleRange={recentCandleRange ?? undefined}
+              layoutKey={chartLayoutKey}
+              panelRef={chartPanelRef}
+              layoutRowRef={layoutRowRef}
+              panelVisible={!rightHidden}
+              ticketCollapsed={ticketCollapsed}
+              onNewBar={(bar) => {
+                if (bar.close > 0) setCurrentBarClose(bar.close);
+                recentBarsRef.current = [
+                  ...recentBarsRef.current.slice(-39),
+                  { high: bar.high, low: bar.low },
+                ];
+              }}
             />
           </div>
         </div>
 
-        {/* Divider left-right */}
-        {!rightHidden && (
-          <div className="resize-handle-h" onMouseDown={handleLeftRightDrag} />
-        )}
+        {/* Divider left-right — stay mounted so chart column width transitions reliably */}
+        <div
+          className="resize-handle-h"
+          onMouseDown={rightHidden ? undefined : handleLeftRightDrag}
+          style={{
+            width: rightHidden ? 0 : 6,
+            minWidth: rightHidden ? 0 : 6,
+            overflow: 'hidden',
+            opacity: rightHidden ? 0 : 1,
+            pointerEvents: rightHidden ? 'none' : 'auto',
+            flexShrink: 0,
+          }}
+        />
 
         {/* Right: Operations, Position, and Trade Log */}
-        {!rightHidden && (
-          <div style={{
-            flex: 1,
+        <div
+          aria-hidden={rightHidden}
+          style={{
+            flex: rightHidden ? '0 0 0px' : '1 1 0',
             minWidth: 0,
+            width: rightHidden ? 0 : undefined,
+            overflow: 'hidden',
+            visibility: rightHidden ? 'hidden' : 'visible',
+            pointerEvents: rightHidden ? 'none' : 'auto',
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             gap: 0,
-            overflow: 'hidden'
-          }}>
+          }}
+        >
             {/* Row 1: Order Ticket */}
             <div style={{ height: ticketCollapsed ? 'auto' : `${ticketHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
               <OrderTicket
@@ -639,8 +755,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
                 tradeLogEndRef={tradeLogEndRef}
               />
             </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../../../api/client';
-import { LOOKBACK, MAX_BUFFER, findClosestIndex, isTradingBar } from '../utils';
+import { LOOKBACK, MAX_BUFFER, applyChartViewport, isTradingBar, type ChartViewportMode } from '../utils';
 import { useChartScrolling } from './useChartScrolling';
 import { useChartWebSocket } from './useChartWebSocket';
 
@@ -10,15 +10,9 @@ interface DataStreamHookOptions {
   timeframe: string;
   onNewBar?: (bar: any) => void;
   virtualEndTime?: string;
+  /** How the chart adjusts its visible range after load / timeframe change. Default: auto. */
+  viewportMode?: ChartViewportMode;
 }
-
-// Global scroll cache to preserve zoom/pan position when changing timeframe/instrument
-const lastScrollCache = {
-  centerTime: null as number | null,
-  width: 150,
-};
-const prevTimeframeCache = { current: '' };
-const prevInstrumentCache = { current: '' };
 
 const TIMEFRAME_SECONDS: Record<string, number> = {
   '1m': 60,
@@ -37,7 +31,7 @@ export function useChartDataStream(
   volumeSeries: ISeriesApi<'Histogram'> | null,
   options: DataStreamHookOptions
 ) {
-  const { instrument, timeframe, onNewBar, virtualEndTime } = options;
+  const { instrument, timeframe, onNewBar, virtualEndTime, viewportMode = 'auto' } = options;
 
   const dataRef = useRef<any[]>([]);
   const paginationRef = useRef({
@@ -99,19 +93,10 @@ export function useChartDataStream(
       hasNewerHistory: false,
     };
 
-    if (prevInstrumentCache.current !== instrument) {
-      lastScrollCache.centerTime = null;
-      prevInstrumentCache.current = instrument;
-    }
-
-    const isTimeframeChange = prevTimeframeCache.current !== timeframe;
     const end = virtualEndTimeRef.current || new Date().toISOString();
-
-    if (!isTimeframeChange) {
-      lastScrollCache.centerTime = null;
-    }
-
-    prevTimeframeCache.current = timeframe;
+    const anchorTime = virtualEndTimeRef.current
+      ? Math.floor(new Date(virtualEndTimeRef.current).getTime() / 1000)
+      : undefined;
 
     const fetchWithLookback = (lookbackDays: number, attempt: number) => {
       const endDate = new Date(end);
@@ -150,56 +135,26 @@ export function useChartDataStream(
           candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
           volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
 
-          if (isTimeframeChange && lastScrollCache.centerTime) {
-            const centerTime = lastScrollCache.centerTime;
-            const centerIndex = findClosestIndex(dataRef.current, centerTime);
-
-            if (centerIndex !== -1) {
-              const halfWidth = lastScrollCache.width / 2;
-              const newFrom = centerIndex - halfWidth;
-              const newTo = centerIndex + halfWidth;
-              chart.timeScale().setVisibleLogicalRange({
-                from: newFrom,
-                to: newTo,
-              });
-            } else {
-              chart.timeScale().fitContent();
-            }
-            lastScrollCache.centerTime = null;
-          } else {
-            chart.timeScale().fitContent();
-          }
+          applyChartViewport(chart, dataRef.current, timeframe, {
+            mode: viewportMode,
+            anchorTime,
+          });
         })
         .catch(console.error);
     };
 
-    const initialDays = LOOKBACK[timeframe] ?? 30;
-    let lookbackDays = initialDays;
-
-    if (isTimeframeChange && lastScrollCache.centerTime) {
-      const centerDateTime = new Date(lastScrollCache.centerTime * 1000);
-      const timeDiffMs = new Date(end).getTime() - centerDateTime.getTime();
-      if (timeDiffMs > 0) {
-        lookbackDays = Math.max(initialDays, (timeDiffMs / 86400_000) + initialDays);
-      }
-    }
-
+    const lookbackDays = LOOKBACK[timeframe] ?? 30;
     fetchWithLookback(lookbackDays, 1);
-
-    return () => {
-      try {
-        const logicalRange = chart.timeScale().getVisibleLogicalRange();
-        if (logicalRange && dataRef.current.length > 0) {
-          const width = logicalRange.to - logicalRange.from;
-          const centerIndex = Math.max(0, Math.min(dataRef.current.length - 1, Math.round((logicalRange.from + logicalRange.to) / 2)));
-          lastScrollCache.centerTime = dataRef.current[centerIndex]?.time;
-          lastScrollCache.width = width;
-        }
-      } catch (e) {
-        /* ignore */
-      }
-    };
   }, [chart, candleSeries, volumeSeries, instrument, timeframe, reloadKey]);
+
+  // Re-apply viewport when the user toggles zoom mode without refetching data
+  useEffect(() => {
+    if (!chart || dataRef.current.length === 0) return;
+    const anchorTime = virtualEndTimeRef.current
+      ? Math.floor(new Date(virtualEndTimeRef.current).getTime() / 1000)
+      : undefined;
+    applyChartViewport(chart, dataRef.current, timeframe, { mode: viewportMode, anchorTime });
+  }, [chart, timeframe, viewportMode]);
 
   // 2. Active updating bar closure — stable via useCallback + series refs
   const updateBar = useCallback((bar: any) => {
