@@ -1,26 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
-
-interface Point {
-  time: number;
-  price: number;
-}
-
-interface Drawing {
-  id: string;
-  type: 'line' | 'box' | 'polyline';
-  points: Point[];
-  color: string;
-  lineWidth: number;
-  fill: boolean;
-  opacity: number;
-}
+import type { Drawing } from './drawingTypes';
+import { getSettingsMenuPosition } from './drawingUtils';
+import { drawItemOnCanvas, drawSelectionHandlesOnCanvas } from './drawingRenderer';
+import { DrawingSettingsMenu } from './DrawingSettingsMenu';
+import { useCanvasPosition, useDrawingInteractions } from './hooks';
 
 interface DrawingOverlayProps {
   chart: IChartApi;
   candleSeries: ISeriesApi<'Candlestick'>;
-  activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser';
-  setActiveTool: (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser') => void;
+  activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci';
+  setActiveTool: (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci') => void;
   drawings: Drawing[];
   setDrawings: React.Dispatch<React.SetStateAction<Drawing[]>>;
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -30,16 +20,21 @@ interface DrawingOverlayProps {
   currentOpacity: number;
   selectedDrawingId: string | null;
   setSelectedDrawingId: (id: string | null) => void;
+  onUpdateColor: (color: string) => void;
+  onUpdateLineWidth: (width: number) => void;
+  onUpdateFill: (fill: boolean) => void;
+  onUpdateOpacity: (opacity: number) => void;
+  onUpdateExtendRight?: (extend: boolean) => void;
+  onUpdateFibLevels?: (levels: number[]) => void;
+  currentExtendRight?: boolean;
+  currentFibLevels?: number[];
+  entryLinePrice?: number | null;
+  slLinePrice?: number | null;
+  tpLinePrice?: number | null;
+  onUpdateEntryPrice?: (price: number) => void;
+  onUpdateSLPrice?: (price: number) => void;
+  onUpdateTPPrice?: (price: number) => void;
 }
-
-// Convert hex color + opacity value to standard RGBA string
-const hexToRgba = (hex: string, alpha: number) => {
-  if (hex.startsWith('rgba') || hex.startsWith('var')) return hex;
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
 
 export function DrawingOverlay({
   chart,
@@ -55,161 +50,86 @@ export function DrawingOverlay({
   currentOpacity,
   selectedDrawingId,
   setSelectedDrawingId,
+  onUpdateColor,
+  onUpdateLineWidth,
+  onUpdateFill,
+  onUpdateOpacity,
+  onUpdateExtendRight,
+  onUpdateFibLevels,
+  currentExtendRight = false,
+  currentFibLevels,
+  entryLinePrice,
+  slLinePrice,
+  tpLinePrice,
+  onUpdateEntryPrice,
+  onUpdateSLPrice,
+  onUpdateTPPrice,
 }: DrawingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
 
-  // Drawing state
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [tempPoints, setTempPoints] = useState<Point[]>([]);
-  const [cursorPos, setCursorPos] = useState<Point | null>(null);
-  const [isHoveringDrawing, setIsHoveringDrawing] = useState(false);
-
-  // Calculate and monitor the exact position and size of the chart pane
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    let intervalId: any = null;
-
-    const updatePosition = () => {
-      const cell = containerRef.current?.querySelector('canvas');
-      const cellElement = cell?.parentElement;
-      if (cellElement) {
-        const cellRect = cellElement.getBoundingClientRect();
-        const containerRect = containerRef.current!.getBoundingClientRect();
-        
-        setPosition({
-          left: cellRect.left - containerRect.left,
-          top: cellRect.top - containerRect.top,
-          width: cellRect.width,
-          height: cellRect.height,
-        });
-
-        // Stop polling once the cell has a valid non-zero size
-        if (cellRect.width > 0 && cellRect.height > 0 && intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
-        }
-      }
-    };
-
-    updatePosition();
-
-    // Start a polling interval to catch the element as soon as it's fully rendered
-    intervalId = setInterval(updatePosition, 100);
-
-    // Observe container element for resizes to keep canvas aligned
-    const ro = new ResizeObserver(updatePosition);
-    ro.observe(containerRef.current);
-
-    window.addEventListener('resize', updatePosition);
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-      ro.disconnect();
-      window.removeEventListener('resize', updatePosition);
-    };
-  }, [containerRef, chart]);
+  // Hook 1: Layout alignment & Coordinate projection
+  const { position, mapPointToPixels, mapPixelsToPoint } = useCanvasPosition(
+    chart,
+    candleSeries,
+    containerRef,
+    canvasRef
+  );
 
   // Subscribe to chart zoom / scroll to repaint the canvas
   useEffect(() => {
     if (!chart) return;
-    const handleRangeChange = () => {
-      setRangeChangeKey((prev) => prev + 1);
-    };
+    const handleRangeChange = () => setRangeChangeKey((prev) => prev + 1);
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
     return () => {
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
-      } catch {}
+      } catch (err) {
+        void err;
+      }
     };
   }, [chart]);
 
-  // Helper to map timestamp & price to local pixel coordinates
-  const mapPointToPixels = (pt: Point) => {
-    const x = chart.timeScale().timeToCoordinate(pt.time as any);
-    const y = candleSeries.priceToCoordinate(pt.price);
-    return { x, y };
-  };
+  // Hook 2: User input gestures (drawing, dragging, selecting, deleting)
+  const {
+    isDrawing,
+    tempPoints,
+    cursorPos,
+    isHoveringDrawing,
+    isHoveringHandle,
+    hoveredOrderLine,
+    dragState,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    handleDoubleClick,
+  } = useDrawingInteractions({
+    activeTool,
+    setActiveTool,
+    drawings,
+    setDrawings,
+    selectedDrawingId,
+    setSelectedDrawingId,
+    currentColor,
+    currentLineWidth,
+    fillBox,
+    currentOpacity,
+    canvasRef,
+    containerRef,
+    rangeChangeKey,
+    mapPixelsToPoint,
+    mapPointToPixels,
+    currentExtendRight,
+    currentFibLevels,
+    entryLinePrice,
+    slLinePrice,
+    tpLinePrice,
+    onUpdateEntryPrice,
+    onUpdateSLPrice,
+    onUpdateTPPrice,
+  });
 
-  // Helper to map mouse coordinates to timestamp & price
-  const mapPixelsToPoint = (clientX: number, clientY: number) => {
-    if (!canvasRef.current) return null;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-
-    const time = chart.timeScale().coordinateToTime(x);
-    const price = candleSeries.coordinateToPrice(y);
-
-    if (time === null || price === null) return null;
-    return { time: Number(time), price };
-  };
-
-  // Distance formula for erasing tool
-  const getDistanceToLine = (x: number, y: number, x1: number, y1: number, x2: number, y2: number) => {
-    const A = x - x1;
-    const B = y - y1;
-    const C = x2 - x1;
-    const D = y2 - y1;
-
-    const dot = A * C + B * D;
-    const lenSq = C * C + D * D;
-    let param = -1;
-    if (lenSq !== 0) param = dot / lenSq;
-
-    let xx, yy;
-    if (param < 0) {
-      xx = x1;
-      yy = y1;
-    } else if (param > 1) {
-      xx = x2;
-      yy = y2;
-    } else {
-      xx = x1 + param * C;
-      yy = y1 + param * D;
-    }
-
-    const dx = x - xx;
-    const dy = y - yy;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
-
-  // Check if a point (x, y) is close to a drawing to erase it
-  const findDrawingUnderCursor = (x: number, y: number) => {
-    for (const d of drawings) {
-      if (d.type === 'line' && d.points.length >= 2) {
-        const p1 = mapPointToPixels(d.points[0]);
-        const p2 = mapPointToPixels(d.points[1]);
-        if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
-          const dist = getDistanceToLine(x, y, p1.x, p1.y, p2.x, p2.y);
-          if (dist < 8) return d.id;
-        }
-      } else if (d.type === 'box' && d.points.length >= 2) {
-        const p1 = mapPointToPixels(d.points[0]);
-        const p2 = mapPointToPixels(d.points[1]);
-        if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
-          const d1 = getDistanceToLine(x, y, p1.x, p1.y, p2.x, p1.y);
-          const d2 = getDistanceToLine(x, y, p2.x, p1.y, p2.x, p2.y);
-          const d3 = getDistanceToLine(x, y, p2.x, p2.y, p1.x, p2.y);
-          const d4 = getDistanceToLine(x, y, p1.x, p2.y, p1.x, p1.y);
-          if (Math.min(d1, d2, d3, d4) < 8) return d.id;
-        }
-      } else if (d.type === 'polyline' && d.points.length >= 2) {
-        for (let i = 0; i < d.points.length - 1; i++) {
-          const p1 = mapPointToPixels(d.points[i]);
-          const p2 = mapPointToPixels(d.points[i + 1]);
-          if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
-            const dist = getDistanceToLine(x, y, p1.x, p1.y, p2.x, p2.y);
-            if (dist < 8) return d.id;
-          }
-        }
-      }
-    }
-    return null;
-  };
-
-  // Handle drawing rendering on canvas
+  // Effect: Render drawings onto canvas
   useEffect(() => {
     if (!canvasRef.current || position.width === 0) return;
     const ctx = canvasRef.current.getContext('2d');
@@ -217,297 +137,163 @@ export function DrawingOverlay({
 
     ctx.clearRect(0, 0, position.width, position.height);
 
-    const drawItem = (
-      type: string,
-      points: Point[],
-      color: string,
-      lineWidth: number,
-      fill: boolean,
-      opacity: number,
-      isTemp = false
-    ) => {
-      if (points.length === 0) return;
-
-      const screenPts = points.map(mapPointToPixels);
-      
-      // If we are currently drawing, append the cursor position as a preview point
-      if (isTemp && cursorPos && type !== 'polyline') {
-        screenPts.push(mapPointToPixels(cursorPos));
-      }
-
-      ctx.strokeStyle = hexToRgba(color, opacity);
-      ctx.lineWidth = lineWidth;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-
-      if (type === 'line' && screenPts.length >= 2) {
-        const p1 = screenPts[0];
-        const p2 = screenPts[1];
-        if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y);
-          ctx.lineTo(p2.x, p2.y);
-          ctx.stroke();
-        }
-      } else if (type === 'box' && screenPts.length >= 2) {
-        const p1 = screenPts[0];
-        const p2 = screenPts[1];
-        if (p1.x !== null && p1.y !== null && p2.x !== null && p2.y !== null) {
-          ctx.beginPath();
-          ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
-          ctx.stroke();
-          if (fill) {
-            ctx.fillStyle = hexToRgba(color, opacity * 0.2); // Fill with translucent version
-            ctx.fill();
-          }
-        }
-      } else if (type === 'polyline' && screenPts.length >= 1) {
-        ctx.beginPath();
-        let started = false;
-        screenPts.forEach((p) => {
-          if (p.x !== null && p.y !== null) {
-            if (!started) {
-              ctx.moveTo(p.x, p.y);
-              started = true;
-            } else {
-              ctx.lineTo(p.x, p.y);
-            }
-          }
-        });
-
-        // Drawing a line preview to current cursor position
-        if (isTemp && cursorPos) {
-          const cp = mapPointToPixels(cursorPos);
-          if (cp.x !== null && cp.y !== null) {
-            if (!started) {
-              ctx.moveTo(cp.x, cp.y);
-            } else {
-              ctx.lineTo(cp.x, cp.y);
-            }
-          }
-        }
-        ctx.stroke();
-      }
-    };
-
-    const drawSelectionHandles = (points: Point[], color: string) => {
-      points.forEach((pt) => {
-        const { x, y } = mapPointToPixels(pt);
-        if (x !== null && y !== null) {
-          ctx.beginPath();
-          ctx.arc(x, y, 5, 0, 2 * Math.PI);
-          ctx.fillStyle = '#ffffff';
-          ctx.fill();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      });
-    };
-
     // Draw saved items
     drawings.forEach((d) => {
-      drawItem(d.type, d.points, d.color, d.lineWidth, d.fill, d.opacity);
+      drawItemOnCanvas(
+        ctx,
+        d.type,
+        d.points,
+        d.color,
+        d.lineWidth,
+        d.fill,
+        d.opacity,
+        mapPointToPixels,
+        false,
+        null,
+        d.extendRight,
+        d.fibLevels
+      );
       if (d.id === selectedDrawingId) {
-        drawSelectionHandles(d.points, d.color);
+        drawSelectionHandlesOnCanvas(ctx, d.points, d.color, mapPointToPixels);
       }
     });
 
     // Draw active drawing in progress
     if (isDrawing && tempPoints.length > 0) {
-      drawItem(
+      drawItemOnCanvas(
+        ctx,
         activeTool === 'polyline' ? 'polyline' : activeTool,
         tempPoints,
         currentColor,
         currentLineWidth,
         fillBox,
         currentOpacity,
-        true
+        mapPointToPixels,
+        true,
+        cursorPos,
+        activeTool === 'fibonacci' ? currentExtendRight : false,
+        activeTool === 'fibonacci' ? currentFibLevels : undefined
       );
     }
-  }, [drawings, isDrawing, tempPoints, cursorPos, position, rangeChangeKey, activeTool, currentColor, currentLineWidth, fillBox, currentOpacity, selectedDrawingId]);
 
-  // Mouse Interaction handlers
-  const handleMouseDown = (e: React.MouseEvent) => {
-    console.log('DrawingOverlay: Mouse down event captured. Tool:', activeTool);
-    
-    if (activeTool === 'select') {
-      if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const targetId = findDrawingUnderCursor(x, y);
-      setSelectedDrawingId(targetId);
-      return;
-    }
-
-    const pt = mapPixelsToPoint(e.clientX, e.clientY);
-    if (!pt) return;
-
-    if (activeTool === 'eraser') {
-      if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const targetId = findDrawingUnderCursor(x, y);
-      if (targetId) {
-        setDrawings((prev) => prev.filter((d) => d.id !== targetId));
-        if (selectedDrawingId === targetId) {
-          setSelectedDrawingId(null);
-        }
-      }
-      return;
-    }
-
-    if (activeTool === 'polyline') {
-      if (!isDrawing) {
-        setIsDrawing(true);
-        setTempPoints([pt]);
-      } else {
-        setTempPoints((prev) => [...prev, pt]);
-      }
-    } else {
-      // Line or Box
-      setIsDrawing(true);
-      setTempPoints([pt]);
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (activeTool === 'select') return;
-
-    const pt = mapPixelsToPoint(e.clientX, e.clientY);
-    if (!pt) return;
-
-    setCursorPos(pt);
-
-    if (isDrawing && activeTool !== 'polyline') {
-      // Update coordinates for preview
-      if (tempPoints.length === 1) {
-        setTempPoints([tempPoints[0], pt]);
-      } else if (tempPoints.length === 2) {
-        setTempPoints([tempPoints[0], pt]);
-      }
-    }
-  };
-
-  const handleMouseUp = () => {
-    if (activeTool === 'select' || activeTool === 'polyline' || activeTool === 'eraser') return;
-
-    if (isDrawing && tempPoints.length >= 2) {
-      const newDrawing: Drawing = {
-        id: `drawing_${Date.now()}`,
-        type: activeTool as 'line' | 'box',
-        points: [...tempPoints],
-        color: currentColor,
-        lineWidth: currentLineWidth,
-        fill: fillBox,
-        opacity: currentOpacity,
-      };
-      setDrawings((prev) => [...prev, newDrawing]);
-      setIsDrawing(false);
-      setTempPoints([]);
-      setActiveTool('select'); // Automatically switch back to selection pointer
-    }
-  };
-
-  const handleDoubleClick = () => {
-    if (activeTool === 'polyline' && isDrawing && tempPoints.length >= 2) {
-      const newDrawing: Drawing = {
-        id: `drawing_${Date.now()}`,
-        type: 'polyline',
-        points: [...tempPoints],
-        color: currentColor,
-        lineWidth: currentLineWidth,
-        fill: false, // Polyline has no fill
-        opacity: currentOpacity,
-      };
-      setDrawings((prev) => [...prev, newDrawing]);
-      setIsDrawing(false);
-      setTempPoints([]);
-      setActiveTool('select');
-    }
-  };
-
-  // Listen to mousemove and mousedown on containerRef (using capture: true) to allow hover select/drag
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const container = containerRef.current;
-
-    const handleContainerMouseMove = (e: MouseEvent) => {
-      if (activeTool !== 'select' || !canvasRef.current) {
-        setIsHoveringDrawing(false);
-        return;
-      }
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      const hoveredId = findDrawingUnderCursor(x, y);
-      setIsHoveringDrawing(hoveredId !== null);
+    // Helper to draw rounded rectangle for badges
+    const drawRoundedRect = (c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+      c.beginPath();
+      c.moveTo(x + r, y);
+      c.lineTo(x + w - r, y);
+      c.quadraticCurveTo(x + w, y, x + w, y + r);
+      c.lineTo(x + w, y + h - r);
+      c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      c.lineTo(x + r, y + h);
+      c.quadraticCurveTo(x, y + h, x, y + h - r);
+      c.lineTo(x, y + r);
+      c.quadraticCurveTo(x, y, x + r, y);
+      c.closePath();
     };
 
-    const handleContainerMouseDown = (e: MouseEvent) => {
-      if (activeTool !== 'select' || !canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+    // Draw active order lines (Limit Entry, Stop Loss, Take Profit)
+    const drawOrderLine = (price: number, color: string, label: string) => {
+      const y = candleSeries.priceToCoordinate(price);
+      if (y === null || y < 0 || y > position.height) return;
 
-      const hoveredId = findDrawingUnderCursor(x, y);
-      // If clicked outside any drawing, deselect
-      if (hoveredId === null) {
-        setSelectedDrawingId(null);
-      }
+      ctx.save();
+      // Draw horizontal dashed line
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(position.width, y);
+      ctx.stroke();
+
+      // Draw badge on the right
+      ctx.setLineDash([]);
+      const text = `${label}: ${price.toFixed(5)}`;
+      ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      const textWidth = ctx.measureText(text).width;
+      const padX = 8;
+      const padY = 4;
+      const badgeW = textWidth + padX * 2;
+      const badgeH = 18 + padY;
+      const badgeX = position.width - badgeW - 12; // 12px margin from right price axis
+      const badgeY = y - badgeH / 2;
+
+      ctx.fillStyle = color;
+      drawRoundedRect(ctx, badgeX, badgeY, badgeW, badgeH, 4);
+      ctx.fill();
+
+      // Subtle light border on badge
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Text color contrast check
+      ctx.fillStyle = color === '#00e676' ? '#000000' : '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, badgeX + badgeW / 2, badgeY + badgeH / 2 + 0.5);
+      ctx.restore();
     };
 
-    container.addEventListener('mousemove', handleContainerMouseMove, true);
-    container.addEventListener('mousedown', handleContainerMouseDown, true);
+    if (entryLinePrice !== null && entryLinePrice !== undefined && entryLinePrice > 0) {
+      drawOrderLine(entryLinePrice, '#2979ff', 'Limit Entry');
+    }
+    if (slLinePrice !== null && slLinePrice !== undefined && slLinePrice > 0) {
+      drawOrderLine(slLinePrice, '#ff1744', 'Stop Loss');
+    }
+    if (tpLinePrice !== null && tpLinePrice !== undefined && tpLinePrice > 0) {
+      drawOrderLine(tpLinePrice, '#00e676', 'Take Profit');
+    }
 
-    return () => {
-      container.removeEventListener('mousemove', handleContainerMouseMove, true);
-      container.removeEventListener('mousedown', handleContainerMouseDown, true);
-    };
-  }, [containerRef, activeTool, drawings, rangeChangeKey, setSelectedDrawingId]);
-
-  // Keyboard shortcut listener to cancel drawing (ESC) or delete selected drawing (Delete/Backspace)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsDrawing(false);
-        setTempPoints([]);
-        setActiveTool('select');
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (activeTool === 'select' && selectedDrawingId) {
-          setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawingId));
-          setSelectedDrawingId(null);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setActiveTool, selectedDrawingId, activeTool, setDrawings, setSelectedDrawingId]);
+  }, [drawings, isDrawing, tempPoints, cursorPos, position, rangeChangeKey, activeTool, currentColor, currentLineWidth, fillBox, currentOpacity, selectedDrawingId, mapPointToPixels, currentExtendRight, currentFibLevels, entryLinePrice, slLinePrice, tpLinePrice]);
 
   if (position.width === 0) return null;
 
+  const selectedDrawing = drawings.find((d) => d.id === selectedDrawingId);
+  const menuPos = getSettingsMenuPosition(selectedDrawingId, drawings, mapPointToPixels, position.width);
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={position.width}
-      height={position.height}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onDoubleClick={handleDoubleClick}
-      style={{
-        position: 'absolute',
-        left: `${position.left}px`,
-        top: `${position.top}px`,
-        width: `${position.width}px`,
-        height: `${position.height}px`,
-        zIndex: 999999, // Render on top of the entire chart widget
-        pointerEvents: activeTool === 'select' ? (isHoveringDrawing ? 'auto' : 'none') : 'auto',
-        cursor: activeTool === 'select' ? (isHoveringDrawing ? 'pointer' : 'default') : 'crosshair',
-      }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        width={position.width}
+        height={position.height}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        style={{
+          position: 'absolute',
+          left: `${position.left}px`,
+          top: `${position.top}px`,
+          width: `${position.width}px`,
+          height: `${position.height}px`,
+          zIndex: 999999, // Render on top of the entire chart widget
+          pointerEvents: activeTool === 'select' 
+            ? (isHoveringDrawing || isHoveringHandle || hoveredOrderLine !== null || selectedDrawingId !== null || dragState !== null ? 'auto' : 'none') 
+            : 'auto',
+          cursor: activeTool === 'select' 
+            ? (hoveredOrderLine !== null || (dragState && (dragState as any).type === 'order_line') ? 'ns-resize' : (isHoveringHandle ? 'move' : (isHoveringDrawing ? 'pointer' : 'default'))) 
+            : 'crosshair',
+        }}
+      />
+
+      {activeTool === 'select' && selectedDrawing && menuPos && (
+        <DrawingSettingsMenu
+          selectedDrawing={selectedDrawing}
+          position={menuPos}
+          onUpdateColor={onUpdateColor}
+          onUpdateLineWidth={onUpdateLineWidth}
+          onUpdateFill={onUpdateFill}
+          onUpdateOpacity={onUpdateOpacity}
+          onUpdateExtendRight={onUpdateExtendRight}
+          onUpdateFibLevels={onUpdateFibLevels}
+          onDelete={() => {
+            setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawingId));
+            setSelectedDrawingId(null);
+          }}
+        />
+      )}
+    </>
   );
 }

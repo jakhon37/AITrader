@@ -85,11 +85,23 @@ export async function stepReplay() {
   return res.json();
 }
 
-export async function placeManualOrder(side: string, size: number) {
+export async function placeManualOrder(
+  side: string,
+  size: number,
+  entryPrice?: number | null,
+  stopLoss?: number | null,
+  takeProfit?: number | null
+) {
   const res = await fetch(`${API_BASE}/replay/order`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ side, size }),
+    body: JSON.stringify({
+      side,
+      size,
+      entry_price: entryPrice,
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
+    }),
   });
   if (!res.ok) throw new Error('Failed to place manual order');
   return res.json();

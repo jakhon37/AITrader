@@ -29,6 +29,9 @@ class StartReplayRequest(BaseModel):
 class ManualOrderRequest(BaseModel):
     side: str = Field(..., description="buy | sell")
     size: float = Field(..., gt=0.0)
+    entry_price: Optional[float] = Field(None)
+    stop_loss: Optional[float] = Field(None)
+    take_profit: Optional[float] = Field(None)
 
 
 class ClosePositionRequest(BaseModel):
@@ -194,7 +197,13 @@ async def place_order(request: Request, body: ManualOrderRequest) -> Dict[str, A
     except Exception:
         raise HTTPException(status_code=400, detail="Side must be 'buy' or 'sell'.")
 
-    order = await session.place_order(side=side, size=body.size)
+    order = await session.place_order(
+        side=side,
+        size=body.size,
+        entry_price=body.entry_price,
+        stop_loss=body.stop_loss,
+        take_profit=body.take_profit,
+    )
     return {"status": "success", "order": order.model_dump(), "session": session.state.to_dict()}
 
 

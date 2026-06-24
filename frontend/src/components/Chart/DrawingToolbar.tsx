@@ -1,53 +1,29 @@
-import { MousePointer, TrendingUp, Square, PenTool, Eraser, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MousePointer, TrendingUp, Square, Eraser, Trash2, ChevronLeft, ChevronRight, ArrowUpDown, Percent, Slash } from 'lucide-react';
 import { useState } from 'react';
 
 interface DrawingToolbarProps {
-  activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser';
-  setActiveTool: (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser') => void;
+  activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci';
+  setActiveTool: (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci') => void;
   onClear: () => void;
-  currentColor: string;
-  setCurrentColor: (color: string) => void;
-  currentLineWidth: number;
-  setCurrentLineWidth: (width: number) => void;
-  fillBox: boolean;
-  setFillBox: (fill: boolean) => void;
-  currentOpacity: number;
-  setCurrentOpacity: (opacity: number) => void;
-  showFillOption?: boolean;
 }
 
 export function DrawingToolbar({
   activeTool,
   setActiveTool,
   onClear,
-  currentColor,
-  setCurrentColor,
-  currentLineWidth,
-  setCurrentLineWidth,
-  fillBox,
-  setFillBox,
-  currentOpacity,
-  setCurrentOpacity,
-  showFillOption = true,
 }: DrawingToolbarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const tools = [
     { id: 'select', icon: MousePointer, label: 'Select' },
-    { id: 'line', icon: TrendingUp, label: 'Trend Line' },
+    { id: 'line', icon: Slash, label: 'Trend Line' },
     { id: 'box', icon: Square, label: 'Box Zone' },
-    { id: 'polyline', icon: PenTool, label: 'Polyline Path' },
+    { id: 'polyline', icon: TrendingUp, label: 'Polyline Path' },
+    { id: 'fibonacci', icon: Percent, label: 'Fib Retracement' },
+    { id: 'position', icon: ArrowUpDown, label: 'Risk/Reward Position' },
     { id: 'eraser', icon: Eraser, label: 'Delete Drawing' },
   ] as const;
 
-  const colors = [
-    '#00e5ff', // Cyan
-    '#00e676', // Green
-    '#ff9100', // Orange
-    '#ff1744', // Red
-    '#ffea00', // Yellow
-    '#ffffff', // White
-  ];
 
   if (isCollapsed) {
     return (
@@ -176,110 +152,6 @@ export function DrawingToolbar({
             </button>
           );
         })}
-      </div>
-
-      <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.08)' }} />
-
-      {/* 2. Color Selection */}
-      <div style={{ width: '100%' }}>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px', textAlign: 'center', fontWeight: 600 }}>
-          Color
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', justifyItems: 'center' }}>
-          {colors.map((c) => (
-            <div
-              key={c}
-              className={`color-dot ${currentColor === c ? 'active' : ''}`}
-              style={{ backgroundColor: c, color: c }}
-              onClick={() => setCurrentColor(c)}
-              title={c}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.08)' }} />
-
-      {/* 3. Line Thickness Selection */}
-      <div style={{ width: '100%' }}>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px', textAlign: 'center', fontWeight: 600 }}>
-          Size
-        </div>
-        <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-          {[1, 2, 3, 4].map((w) => {
-            const isActive = currentLineWidth === w;
-            return (
-              <button
-                key={w}
-                onClick={() => setCurrentLineWidth(w)}
-                style={{
-                  background: isActive ? 'var(--neon-cyan-glow)' : 'transparent',
-                  border: `1px solid ${isActive ? 'var(--neon-cyan)' : 'transparent'}`,
-                  color: isActive ? 'var(--neon-cyan)' : 'var(--text-secondary)',
-                  borderRadius: '4px',
-                  padding: '2px 6px',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  fontWeight: isActive ? 600 : 400,
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                {w}px
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {showFillOption && (
-        <>
-          <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.08)' }} />
-
-          {/* 4. Box Fill Toggle */}
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '11px',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={fillBox}
-                onChange={(e) => setFillBox(e.target.checked)}
-                style={{
-                  cursor: 'pointer',
-                  accentColor: 'var(--neon-cyan)',
-                }}
-              />
-              Fill Box
-            </label>
-          </div>
-        </>
-      )}
-
-      <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.08)' }} />
-
-      {/* 5. Opacity Selection */}
-      <div style={{ width: '100%' }}>
-        <div style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px', textAlign: 'center', fontWeight: 600 }}>
-          Opacity ({Math.round(currentOpacity * 100)}%)
-        </div>
-        <input
-          type="range"
-          min="0.1"
-          max="1.0"
-          step="0.1"
-          value={currentOpacity}
-          onChange={(e) => setCurrentOpacity(parseFloat(e.target.value))}
-          className="drawing-slider"
-          style={{ width: '100%', boxSizing: 'border-box' }}
-        />
       </div>
 
       <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.08)' }} />

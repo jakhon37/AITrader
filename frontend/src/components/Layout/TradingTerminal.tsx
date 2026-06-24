@@ -9,6 +9,7 @@ import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useSignalsStore } from '../../store/signals';
+import { ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 
 interface TradingTerminalProps {
   sidebarHidden: boolean;
@@ -23,6 +24,26 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   const [rightHidden, setRightHidden] = useState(() => {
     return localStorage.getItem('terminal_right_hidden') === 'true';
   });
+
+  // Right column individual collapses
+  const [fusionCollapsed, setFusionCollapsed] = useState(() => {
+    return localStorage.getItem('terminal_fusion_collapsed') === 'true';
+  });
+  const [newsCollapsed, setNewsCollapsed] = useState(() => {
+    return localStorage.getItem('terminal_news_collapsed') === 'true';
+  });
+  const [configCollapsed, setConfigCollapsed] = useState(() => {
+    return localStorage.getItem('terminal_config_collapsed') === 'true';
+  });
+
+  // Left column downside collapses
+  const [indicatorCollapsed, setIndicatorCollapsed] = useState(() => {
+    return localStorage.getItem('terminal_indicator_collapsed') === 'true';
+  });
+  const [bottomCollapsed, setBottomCollapsed] = useState(() => {
+    return localStorage.getItem('terminal_bottom_collapsed') === 'true';
+  });
+
   const [leftWidth, setLeftWidth] = useState(72);
   const [chartHeight, setChartHeight] = useState(50);
   const [indicatorHeight, setIndicatorHeight] = useState(25);
@@ -32,6 +53,46 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
     setRightHidden((prev) => {
       const next = !prev;
       localStorage.setItem('terminal_right_hidden', String(next));
+      return next;
+    });
+  };
+
+  const handleToggleFusionCollapsed = () => {
+    setFusionCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('terminal_fusion_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const handleToggleNewsCollapsed = () => {
+    setNewsCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('terminal_news_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const handleToggleConfigCollapsed = () => {
+    setConfigCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('terminal_config_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const handleToggleIndicatorCollapsed = () => {
+    setIndicatorCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('terminal_indicator_collapsed', String(next));
+      return next;
+    });
+  };
+
+  const handleToggleBottomCollapsed = () => {
+    setBottomCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('terminal_bottom_collapsed', String(next));
       return next;
     });
   };
@@ -157,8 +218,8 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
           flexDirection: 'column',
           overflow: 'hidden'
         }}>
-          {/* Chart (Row 1) */}
-          <div className="glass-panel" style={{ height: `${chartHeight}%`, flexShrink: 0, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden', boxSizing: 'border-box' }}>
+          {/* Chart (Row 1) - Fills remaining space dynamically */}
+          <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
               <span style={{ fontWeight: 600, fontSize: 13 }}>{instrument} · {timeframe}</span>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Real-time chart</span>
@@ -167,27 +228,112 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
           </div>
 
           {/* Divider 1 */}
-          <div className="resize-handle-v" onMouseDown={handleVerticalDrag1} />
+          {!indicatorCollapsed && (
+            <div className="resize-handle-v" onMouseDown={handleVerticalDrag1} />
+          )}
 
           {/* Indicator Panel (Row 2) */}
-          <div style={{ height: `${indicatorHeight}%`, flexShrink: 0, overflow: 'hidden' }}>
-            <IndicatorPanel />
+          <div
+            className="glass-panel"
+            style={{
+              height: indicatorCollapsed ? '36px' : `${indicatorHeight}%`,
+              flexShrink: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              padding: 0,
+              overflow: 'hidden',
+              boxSizing: 'border-box',
+              marginTop: 10
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '8px 12px',
+              borderBottom: indicatorCollapsed ? 'none' : '1px solid rgba(255,255,255,0.05)',
+              height: 36,
+              boxSizing: 'border-box',
+              width: '100%'
+            }}>
+              <span style={{ fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>Indicator Panels (RSI & MACD)</span>
+              <button
+                onClick={handleToggleIndicatorCollapsed}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+              >
+                {indicatorCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
+            {!indicatorCollapsed && (
+              <div style={{ flex: 1, minHeight: 0, padding: 8 }}>
+                <IndicatorPanel />
+              </div>
+            )}
           </div>
 
           {/* Divider 2 */}
-          <div className="resize-handle-v" onMouseDown={handleVerticalDrag2} />
+          {!bottomCollapsed && (
+            <div className="resize-handle-v" onMouseDown={handleVerticalDrag2} />
+          )}
 
           {/* Bottom row (Row 3) - Portfolio & SignalLog */}
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden', width: '100%', gap: 0 }}>
-            <div style={{ width: `${portfolioWidth}%`, flexShrink: 0, height: '100%', overflow: 'hidden' }}>
-              <Portfolio />
-            </div>
+          <div
+            className={bottomCollapsed ? 'glass-panel' : ''}
+            style={{
+              height: bottomCollapsed ? '36px' : '30%',
+              minHeight: bottomCollapsed ? '36px' : 0,
+              display: 'flex',
+              flexDirection: bottomCollapsed ? 'column' : 'row',
+              overflow: 'hidden',
+              width: '100%',
+              gap: 0,
+              marginTop: 10,
+              boxSizing: 'border-box'
+            }}
+          >
+            {bottomCollapsed ? (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '8px 12px',
+                height: 36,
+                boxSizing: 'border-box',
+                width: '100%'
+              }}>
+                <span style={{ fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Briefcase size={13} color="var(--neon-cyan)" /> Operations (Portfolio & Signal Feed)
+                </span>
+                <button
+                  onClick={handleToggleBottomCollapsed}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div style={{ width: `${portfolioWidth}%`, flexShrink: 0, height: '100%', overflow: 'hidden', position: 'relative' }}>
+                  {/* Header collapse button is added inside Portfolio.tsx or custom wrapper */}
+                  <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+                    <button
+                      onClick={handleToggleBottomCollapsed}
+                      title="Collapse Operations Panel"
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                  </div>
+                  <Portfolio />
+                </div>
 
-            <div className="resize-handle-h" onMouseDown={handlePortfolioResize} />
+                <div className="resize-handle-h" onMouseDown={handlePortfolioResize} />
 
-            <div style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }}>
-              <SignalLog />
-            </div>
+                <div style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }}>
+                  <SignalLog />
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -207,9 +353,20 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
             gap: 12,
             overflow: 'hidden'
           }}>
-            <FusionPanel instrument={instrument} />
-            <NewsFeed />
-            <ConfigEditor instrument={instrument} />
+            <FusionPanel
+              instrument={instrument}
+              isCollapsed={fusionCollapsed}
+              onToggleCollapse={handleToggleFusionCollapsed}
+            />
+            <NewsFeed
+              isCollapsed={newsCollapsed}
+              onToggleCollapse={handleToggleNewsCollapsed}
+            />
+            <ConfigEditor
+              instrument={instrument}
+              isCollapsed={configCollapsed}
+              onToggleCollapse={handleToggleConfigCollapsed}
+            />
           </div>
         )}
       </div>

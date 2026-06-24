@@ -1,28 +1,64 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLightweightChart, useChartDataStream } from './hooks';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
+import type { Drawing } from './drawingTypes';
 
 interface Props {
   instrument: string;
   timeframe: string;
   onNewBar?: (bar: { time: number; open: number; high: number; low: number; close: number; volume: number }) => void;
   virtualEndTime?: string; // ISO string representing active replay timestamp
+  entryLinePrice?: number | null;
+  slLinePrice?: number | null;
+  tpLinePrice?: number | null;
+  onPositionSelect?: (position: { entry: number; sl: number; tp: number } | null) => void;
+  onUpdateEntryPrice?: (price: number) => void;
+  onUpdateSLPrice?: (price: number) => void;
+  onUpdateTPPrice?: (price: number) => void;
 }
 
-export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }: Props) {
+export function CandleChart({
+  instrument,
+  timeframe,
+  onNewBar,
+  virtualEndTime,
+  entryLinePrice,
+  slLinePrice,
+  tpLinePrice,
+  onPositionSelect,
+  onUpdateEntryPrice,
+  onUpdateSLPrice,
+  onUpdateTPPrice,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [activeTool, setActiveTool] = useState<'select' | 'line' | 'box' | 'polyline' | 'eraser'>('select');
-  const [drawings, setDrawings] = useState<any[]>([]);
+  const [activeTool, setActiveTool] = useState<'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci'>('select');
+  const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
 
-  const [toolSettings, setToolSettings] = useState<Record<string, { color: string; lineWidth: number; fill: boolean; opacity: number }>>({
+  const [toolSettings, setToolSettings] = useState<Record<string, {
+    color: string;
+    lineWidth: number;
+    fill: boolean;
+    opacity: number;
+    extendRight?: boolean;
+    fibLevels?: number[];
+  }>>({
     line: { color: '#00e5ff', lineWidth: 2, fill: false, opacity: 0.8 },
     box: { color: '#00e676', lineWidth: 2, fill: true, opacity: 0.8 },
     polyline: { color: '#ff9100', lineWidth: 2, fill: false, opacity: 0.8 },
+    position: { color: '#00e676', lineWidth: 2, fill: true, opacity: 0.8 },
+    fibonacci: {
+      color: '#ffea00',
+      lineWidth: 1.5,
+      fill: true,
+      opacity: 0.8,
+      extendRight: false,
+      fibLevels: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.618, 2.618, 3.618, 4.236],
+    },
   });
 
-  const handleSetActiveTool = (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser') => {
+  const handleSetActiveTool = (tool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci') => {
     setActiveTool(tool);
     setSelectedDrawingId(null);
   };
@@ -35,6 +71,8 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
   const currentLineWidth = selectedDrawing ? selectedDrawing.lineWidth : (toolSettings[targetToolType]?.lineWidth || 2);
   const fillBox = selectedDrawing ? selectedDrawing.fill : (toolSettings[targetToolType]?.fill ?? true);
   const currentOpacity = selectedDrawing ? selectedDrawing.opacity : (toolSettings[targetToolType]?.opacity || 0.8);
+  const currentExtendRight = selectedDrawing ? selectedDrawing.extendRight : (toolSettings[targetToolType]?.extendRight ?? false);
+  const currentFibLevels = selectedDrawing ? selectedDrawing.fibLevels : (toolSettings[targetToolType]?.fibLevels ?? [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]);
 
   const setCurrentColor = (color: string) => {
     if (selectedDrawingId) {
@@ -103,6 +141,40 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
       }));
     }
   };
+
+  const setExtendRight = (extend: boolean) => {
+    if (selectedDrawingId) {
+      setDrawings((prev) => prev.map((d) => d.id === selectedDrawingId ? { ...d, extendRight: extend } : d));
+      if (selectedDrawing) {
+        setToolSettings((prev) => ({
+          ...prev,
+          [selectedDrawing.type]: { ...prev[selectedDrawing.type], extendRight: extend },
+        }));
+      }
+    } else {
+      setToolSettings((prev) => ({
+        ...prev,
+        [targetToolType]: { ...prev[targetToolType], extendRight: extend },
+      }));
+    }
+  };
+
+  const setFibLevels = (levels: number[]) => {
+    if (selectedDrawingId) {
+      setDrawings((prev) => prev.map((d) => d.id === selectedDrawingId ? { ...d, fibLevels: levels } : d));
+      if (selectedDrawing) {
+        setToolSettings((prev) => ({
+          ...prev,
+          [selectedDrawing.type]: { ...prev[selectedDrawing.type], fibLevels: levels },
+        }));
+      }
+    } else {
+      setToolSettings((prev) => ({
+        ...prev,
+        [targetToolType]: { ...prev[targetToolType], fibLevels: levels },
+      }));
+    }
+  };
   
   // Custom hook to initialize lightweight-chart canvas and series, and handle resize observer
   const { chart, candleSeries, volumeSeries } = useLightweightChart(containerRef);
@@ -114,6 +186,92 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
     onNewBar,
     virtualEndTime,
   });
+
+  // Manage Order Preset Lines on the chart
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const entryLineRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const slLineRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tpLineRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!candleSeries) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updateLine = (ref: { current: any }, price: number | null | undefined, options: any) => {
+      if (ref.current) {
+        try {
+          candleSeries.removePriceLine(ref.current);
+        } catch (err) {
+          void err;
+        }
+        ref.current = null;
+      }
+      if (price !== null && price !== undefined && price > 0) {
+        ref.current = candleSeries.createPriceLine({
+          price,
+          ...options,
+        });
+      }
+    };
+
+    updateLine(entryLineRef, entryLinePrice, {
+      color: '#2979ff',
+      lineWidth: 2,
+      lineStyle: 1, // 1 = Dashed
+      axisLabelVisible: true,
+      title: 'Limit Entry',
+    });
+
+    updateLine(slLineRef, slLinePrice, {
+      color: '#ff1744',
+      lineWidth: 2,
+      lineStyle: 1, // Dashed
+      axisLabelVisible: true,
+      title: 'Stop Loss',
+    });
+
+    updateLine(tpLineRef, tpLinePrice, {
+      color: '#00e676',
+      lineWidth: 2,
+      lineStyle: 1, // Dashed
+      axisLabelVisible: true,
+      title: 'Take Profit',
+    });
+
+    return () => {
+      if (entryLineRef.current) {
+        try { candleSeries.removePriceLine(entryLineRef.current); } catch (err) { void err; }
+        entryLineRef.current = null;
+      }
+      if (slLineRef.current) {
+        try { candleSeries.removePriceLine(slLineRef.current); } catch (err) { void err; }
+        slLineRef.current = null;
+      }
+      if (tpLineRef.current) {
+        try { candleSeries.removePriceLine(tpLineRef.current); } catch (err) { void err; }
+        tpLineRef.current = null;
+      }
+    };
+  }, [candleSeries, entryLinePrice, slLinePrice, tpLinePrice]);
+
+  // Trigger onPositionSelect callback when active position drawing is selected or modified
+  useEffect(() => {
+    if (!onPositionSelect) return;
+    if (selectedDrawingId) {
+      const selected = drawings.find((d) => d.id === selectedDrawingId);
+      if (selected && selected.type === 'position' && selected.points.length >= 3) {
+        onPositionSelect({
+          entry: selected.points[0].price,
+          tp: selected.points[1].price,
+          sl: selected.points[2].price,
+        });
+        return;
+      }
+    }
+    onPositionSelect(null);
+  }, [selectedDrawingId, drawings, onPositionSelect]);
 
   const clearDrawings = () => {
     setDrawings([]);
@@ -127,15 +285,6 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
         activeTool={activeTool}
         setActiveTool={handleSetActiveTool}
         onClear={clearDrawings}
-        currentColor={currentColor}
-        setCurrentColor={setCurrentColor}
-        currentLineWidth={currentLineWidth}
-        setCurrentLineWidth={setCurrentLineWidth}
-        fillBox={fillBox}
-        setFillBox={setFillBox}
-        currentOpacity={currentOpacity}
-        setCurrentOpacity={setCurrentOpacity}
-        showFillOption={targetToolType === 'box'}
       />
 
       {/* Chart container */}
@@ -156,6 +305,20 @@ export function CandleChart({ instrument, timeframe, onNewBar, virtualEndTime }:
             currentOpacity={currentOpacity}
             selectedDrawingId={selectedDrawingId}
             setSelectedDrawingId={setSelectedDrawingId}
+            onUpdateColor={setCurrentColor}
+            onUpdateLineWidth={setCurrentLineWidth}
+            onUpdateFill={setFillBox}
+            onUpdateOpacity={setCurrentOpacity}
+            currentExtendRight={currentExtendRight}
+            currentFibLevels={currentFibLevels}
+            onUpdateExtendRight={setExtendRight}
+            onUpdateFibLevels={setFibLevels}
+            entryLinePrice={entryLinePrice}
+            slLinePrice={slLinePrice}
+            tpLinePrice={tpLinePrice}
+            onUpdateEntryPrice={onUpdateEntryPrice}
+            onUpdateSLPrice={onUpdateSLPrice}
+            onUpdateTPPrice={onUpdateTPPrice}
           />
         )}
       </div>

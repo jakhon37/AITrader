@@ -41,16 +41,22 @@ class TradingMixin:
     is satisfied by BaseReplaySession and ManualReplaySession at runtime.
     """
 
-    async def place_order(self, side: OrderSide, size: float) -> Order:
+    async def place_order(
+        self,
+        side: OrderSide,
+        size: float,
+        entry_price: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+    ) -> Order:
         """Build and publish a manual TradeSignal; return the simulated filled Order.
 
-        SL/TP defaults to 50 / 100 pips.  Override by subclassing or by adding
-        a place_order_with_levels() method alongside this one.
+        SL/TP defaults to 50 / 100 pips if not provided. Custom values are used if specified.
         """
         if not self._current_bar:  # type: ignore[attr-defined]
             raise ValueError("No active bar — cannot determine entry price.")
 
-        entry_price: float = self._current_bar.close  # type: ignore[attr-defined]
+        actual_entry: float = entry_price if entry_price is not None else self._current_bar.close
         sig_id = new_signal_id()
 
         pip = (
@@ -58,16 +64,10 @@ class TradingMixin:
             if self.instrument == Instrument.USDJPY  # type: ignore[attr-defined]
             else _PIP_STANDARD
         )
-        sl = (
-            entry_price - (_DEFAULT_SL_PIPS * pip)
-            if side == OrderSide.BUY
-            else entry_price + (_DEFAULT_SL_PIPS * pip)
-        )
-        tp = (
-            entry_price + (_DEFAULT_TP_PIPS * pip)
-            if side == OrderSide.BUY
-            else entry_price - (_DEFAULT_TP_PIPS * pip)
-        )
+
+        # If sl/tp are explicitly sent as optional values, use them. Otherwise compute defaults.
+        sl = stop_loss
+        tp = take_profit
 
         trade_sig = TradeSignal(
             signal_id=sig_id,
@@ -80,7 +80,7 @@ class TradingMixin:
             fundamental_weight=0.0,
             technical_weight=0.0,
             suggested_side=side,
-            suggested_entry=entry_price,
+            suggested_entry=actual_entry,
             suggested_sl=sl,
             suggested_tp=tp,
             suggested_size=size,
@@ -115,7 +115,7 @@ class TradingMixin:
             status=OrderStatus.FILLED,
             created_at=self.clock.now(),  # type: ignore[attr-defined]
             filled_at=self.clock.now(),  # type: ignore[attr-defined]
-            filled_price=entry_price,
+            filled_price=actual_entry,
             execution_mode="paper",
         )
 

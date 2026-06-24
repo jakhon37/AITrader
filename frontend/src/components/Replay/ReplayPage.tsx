@@ -45,6 +45,17 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Optional Entry, Stop Loss, and Take Profit levels
+  const [presetEnabled, setPresetEnabled] = useState(false);
+  const [presetEntryPrice, setPresetEntryPrice] = useState<number>(0);
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slPrice, setSlPrice] = useState<number>(0);
+  const [tpEnabled, setTpEnabled] = useState(false);
+  const [tpPrice, setTpPrice] = useState<number>(0);
+
+  const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
+  const [barsHistory, setBarsHistory] = useState<any[]>([]);
+
   // Auto Scroll Refs
   const tradeLogEndRef = useRef<HTMLDivElement>(null);
 
@@ -162,6 +173,9 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
           setSpeed(res.session.speed);
           setCurrentTime(res.session.current_time);
           setSessionState(res.session);
+          if (res.session.current_bar) {
+            setBarsHistory([res.session.current_bar]);
+          }
           if (res.session.calculate_indicators !== undefined) {
             setCalculateIndicators(res.session.calculate_indicators);
           }
@@ -184,6 +198,21 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
         }
         if (session_state.calculate_indicators !== undefined) {
           setCalculateIndicators(session_state.calculate_indicators);
+        }
+
+        if (session_state.current_bar) {
+          const bar = session_state.current_bar;
+          setBarsHistory((prev) => {
+            if (prev.length === 0 || prev[prev.length - 1].time !== bar.time) {
+              const next = [...prev, bar];
+              if (next.length > 5) next.shift();
+              return next;
+            } else {
+              const next = [...prev];
+              next[next.length - 1] = bar;
+              return next;
+            }
+          });
         }
         
         if (session_state.status === 'ended') {
@@ -252,7 +281,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     }
   };
 
-  const handleStop = async () => {
+  async function handleStop() {
     try {
       const res = await stopReplay();
       if (res.status === 'success') {
@@ -265,7 +294,7 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     } catch (err) {
       console.error('Stop failed:', err);
     }
-  };
+  }
 
   const handleTimeframeChange = async (newTf: string) => {
     try {
@@ -282,11 +311,78 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     }
   };
 
+  const currentClosePrice = sessionState?.current_bar?.close || 0;
+
+  const getCandleHighLow = () => {
+    if (barsHistory.length >= 2) {
+      const b0 = barsHistory[barsHistory.length - 1];
+      const b1 = barsHistory[barsHistory.length - 2];
+      return {
+        lowestLow: Math.min(b0.low, b1.low),
+        highestHigh: Math.max(b0.high, b1.high),
+      };
+    }
+    const close = sessionState?.current_bar?.close || 0;
+    return {
+      lowestLow: close * 0.995,
+      highestHigh: close * 1.005,
+    };
+  };
+
+  const handleTogglePreset = (enabled: boolean) => {
+    setPresetEnabled(enabled);
+    if (enabled) {
+      setPresetEntryPrice(currentClosePrice);
+    }
+  };
+
+  const handleToggleSL = (enabled: boolean) => {
+    setSlEnabled(enabled);
+    if (enabled) {
+      const { lowestLow, highestHigh } = getCandleHighLow();
+      setSlPrice(orderSide === 'buy' ? lowestLow : highestHigh);
+    }
+  };
+
+  const handleToggleTP = (enabled: boolean) => {
+    setTpEnabled(enabled);
+    if (enabled) {
+      const { lowestLow, highestHigh } = getCandleHighLow();
+      setTpPrice(orderSide === 'buy' ? highestHigh : lowestLow);
+    }
+  };
+
+  const handleToggleSide = (side: 'buy' | 'sell') => {
+    setOrderSide(side);
+    const { lowestLow, highestHigh } = getCandleHighLow();
+    if (side === 'buy') {
+      if (slEnabled) setSlPrice(lowestLow);
+      if (tpEnabled) setTpPrice(highestHigh);
+    } else {
+      if (slEnabled) setSlPrice(highestHigh);
+      if (tpEnabled) setTpPrice(lowestLow);
+    }
+  };
+
+  const handlePositionSelect = (pos: { entry: number; sl: number; tp: number } | null) => {
+    if (pos) {
+      setPresetEnabled(true);
+      setPresetEntryPrice(pos.entry);
+      setSlEnabled(true);
+      setSlPrice(pos.sl);
+      setTpEnabled(true);
+      setTpPrice(pos.tp);
+    }
+  };
+
   const handleBuy = async () => {
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await placeManualOrder('buy', orderSize);
+      const entry = presetEnabled ? presetEntryPrice : null;
+      const sl = slEnabled ? slPrice : null;
+      const tp = tpEnabled ? tpPrice : null;
+      const res = await placeManualOrder('buy', orderSize, entry, sl, tp);
       if (res.status === 'success') {
         setSuccessMsg(`Market BUY ${orderSize} lots filled at ${res.order.filled_price}`);
       }
@@ -299,7 +395,10 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const res = await placeManualOrder('sell', orderSize);
+      const entry = presetEnabled ? presetEntryPrice : null;
+      const sl = slEnabled ? slPrice : null;
+      const tp = tpEnabled ? tpPrice : null;
+      const res = await placeManualOrder('sell', orderSize, entry, sl, tp);
       if (res.status === 'success') {
         setSuccessMsg(`Market SELL ${orderSize} lots filled at ${res.order.filled_price}`);
       }
@@ -455,7 +554,18 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Historical Simulation</span>
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <CandleChart instrument={instrument} timeframe={timeframe} virtualEndTime={currentTime || undefined} />
+            <CandleChart
+              instrument={instrument}
+              timeframe={timeframe}
+              virtualEndTime={currentTime || undefined}
+              entryLinePrice={presetEnabled ? presetEntryPrice : null}
+              slLinePrice={slEnabled ? slPrice : null}
+              tpLinePrice={tpEnabled ? tpPrice : null}
+              onPositionSelect={handlePositionSelect}
+              onUpdateEntryPrice={setPresetEntryPrice}
+              onUpdateSLPrice={setSlPrice}
+              onUpdateTPPrice={setTpPrice}
+            />
           </div>
         </div>
 
@@ -487,6 +597,20 @@ export function ReplayPage({ sidebarHidden }: ReplayPageProps) {
                 isCollapsed={ticketCollapsed}
                 onToggleCollapse={() => handleToggleTicketCollapsed(!ticketCollapsed)}
                 mode={mode}
+                presetEnabled={presetEnabled}
+                presetEntryPrice={presetEntryPrice}
+                setPresetEntryPrice={setPresetEntryPrice}
+                onTogglePreset={handleTogglePreset}
+                slEnabled={slEnabled}
+                slPrice={slPrice}
+                setSlPrice={setSlPrice}
+                onToggleSL={handleToggleSL}
+                tpEnabled={tpEnabled}
+                tpPrice={tpPrice}
+                setTpPrice={setTpPrice}
+                onToggleTP={handleToggleTP}
+                orderSide={orderSide}
+                onToggleSide={handleToggleSide}
               />
             </div>
 

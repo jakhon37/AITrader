@@ -112,15 +112,15 @@ class OHLCVFetcher:
                 "Install with: pip install yfinance"
             )
 
-    def fetch_latest_bar(
+    def fetch_live_bars(
         self,
         instrument: Instrument,
         timeframe: Timeframe,
-    ) -> OHLCVBar:
-        """Fetch the most recently closed bar for instrument/timeframe.
+    ) -> tuple[OHLCVBar, Optional[OHLCVBar]]:
+        """Fetch both the last completed bar and the current active (incomplete) bar.
 
-        Returns an OHLCVBar with the bar's open time as timestamp.
-        Raises DataError on any failure.
+        Returns:
+            (completed_bar, active_bar)
         """
         ticker_sym = self._SYMBOL_MAP.get(instrument)
         if ticker_sym is None:
@@ -139,7 +139,7 @@ class OHLCVFetcher:
         }
         yf_interval = _TF_TO_YF[timeframe]
 
-        # Fetch the last 3 bars (enough to always have one complete closed bar)
+        # Fetch the last 3 bars (enough to always have one complete closed bar + active bar)
         try:
             ticker = self._yf.Ticker(ticker_sym)
             df = ticker.history(period="1d", interval=yf_interval)
@@ -163,32 +163,48 @@ class OHLCVFetcher:
                 f"Got: {list(df.columns)}"
             )
 
-        # The LAST row is the most recently closed bar
-        # (yfinance returns the current incomplete bar last; skip it by taking iloc[-2]
-        #  when there are at least 2 rows; otherwise iloc[-1] is the only bar available)
-        idx = -2 if len(df) >= 2 else -1
-        row = df.iloc[idx]
-        bar_ts = df.index[idx]
+        # If we have at least 2 bars, iloc[-2] is completed, iloc[-1] is active
+        # If we only have 1 bar, it is treated as completed (no active bar yet)
+        if len(df) >= 2:
+            comp_idx = -2
+            act_idx = -1
+        else:
+            comp_idx = -1
+            act_idx = None
 
-        # Ensure UTC-aware
-        if hasattr(bar_ts, "tzinfo") and bar_ts.tzinfo is None:
-            bar_ts = bar_ts.tz_localize("UTC")
-        bar_ts_dt = pd.Timestamp(bar_ts).tz_convert("UTC").to_pydatetime()
+        def _make_bar_from_row(idx: int, is_active: bool) -> OHLCVBar:
+            row = df.iloc[idx]
+            bar_ts = df.index[idx]
+            if hasattr(bar_ts, "tzinfo") and bar_ts.tzinfo is None:
+                bar_ts = bar_ts.tz_localize("UTC")
+            bar_ts_dt = pd.Timestamp(bar_ts).tz_convert("UTC").to_pydatetime()
+            volume = float(row.get("volume", 0.0) or 0.0)
+            return OHLCVBar(
+                signal_id=new_signal_id(),
+                instrument=instrument,
+                timeframe=timeframe,
+                timestamp=bar_ts_dt,
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=volume,
+                source="yfinance" if not is_active else "yfinance_active",
+            )
 
-        volume = float(row.get("volume", 0.0) or 0.0)
+        completed_bar = _make_bar_from_row(comp_idx, is_active=False)
+        active_bar = _make_bar_from_row(act_idx, is_active=True) if act_idx is not None else None
 
-        return OHLCVBar(
-            signal_id=new_signal_id(),
-            instrument=instrument,
-            timeframe=timeframe,
-            timestamp=bar_ts_dt,
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
-            volume=volume,
-            source="yfinance",
-        )
+        return completed_bar, active_bar
+
+    def fetch_latest_bar(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+    ) -> OHLCVBar:
+        """Fetch the most recently closed bar for instrument/timeframe."""
+        completed_bar, _ = self.fetch_live_bars(instrument, timeframe)
+        return completed_bar
 
 
 # ── DataScheduler ─────────────────────────────────────────────────────────────
@@ -199,10 +215,9 @@ class DataScheduler:
     Live mode
     ---------
     ``run()`` starts an asyncio loop that:
-    1. Calculates the next candle-close time for each (instrument, timeframe).
-    2. Sleeps until the earliest upcoming close.
-    3. Fetches the completed bar and publishes OHLCVBar on the bus.
-    4. Stores the bar in the DataStore.
+    1. Polling Yahoo Finance API every 5 seconds for registered active pairs.
+    2. Broadcasts active ticking candles to WebSockets in real time.
+    3. Detects completed candle transitions, writes completed bars to Parquet, and publishes.
 
     Replay mode
     -----------
@@ -237,12 +252,14 @@ class DataScheduler:
         self._store = store
         self._clock = clock
         self._fetcher = fetcher or OHLCVFetcher()
-        self._active_pairs: list[tuple[Instrument, Timeframe]] = active_pairs or [
-            (Instrument.EURUSD, Timeframe.H1),
-            (Instrument.GBPUSD, Timeframe.H1),
-            (Instrument.USDJPY, Timeframe.H1),
-            (Instrument.XAUUSD, Timeframe.H1),
-        ]
+        self._active_pairs: list[tuple[Instrument, Timeframe]] = (
+            active_pairs if active_pairs is not None else [
+                (Instrument.EURUSD, Timeframe.H1),
+                (Instrument.GBPUSD, Timeframe.H1),
+                (Instrument.USDJPY, Timeframe.H1),
+                (Instrument.XAUUSD, Timeframe.H1),
+            ]
+        )
         self._running = False
         # Track the last emitted candle open time per (instrument, timeframe)
         self._last_emitted: dict[tuple[Instrument, Timeframe], datetime] = {}
@@ -263,75 +280,62 @@ class DataScheduler:
             _log.info("scheduler_stopped")
 
     async def _live_loop(self) -> None:
-        """Inner loop: sleep to the next close, emit, repeat."""
+        """Inner loop: poll active candles, publish updates, repeat."""
         while self._running:
             if not self._active_pairs:
                 await asyncio.sleep(1.0)
                 continue
 
-            now = self._clock.now()
+            for instrument, timeframe in list(self._active_pairs):
+                if not self._running:
+                    break
 
-            # Find the next candle close across all active pairs
-            next_closes = [
-                _next_candle_close(now, tf)
-                for _, tf in self._active_pairs
-            ]
-            earliest_close = min(next_closes)
+                try:
+                    # Support both standard fetcher and test mock/stubs
+                    if hasattr(self._fetcher, "fetch_live_bars"):
+                        completed_bar, active_bar = self._fetcher.fetch_live_bars(instrument, timeframe)
+                    else:
+                        completed_bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
+                        active_bar = None
 
-            sleep_secs = (earliest_close - now).total_seconds()
-            if sleep_secs > 0:
-                _log.debug("scheduler_sleeping", seconds=round(sleep_secs, 1))
-                await asyncio.sleep(sleep_secs)
-
-            if not self._running:
-                break
-
-            # Emit bars for any pair whose close time has now passed
-            now_after_sleep = self._clock.now()
-            for instrument, timeframe in self._active_pairs:
-                close_time = _next_candle_close(
-                    now, timeframe  # use `now` before sleep so we target the same candle
-                )
-                if now_after_sleep >= close_time:
-                    try:
-                        await self._fetch_and_publish(instrument, timeframe)
-                    except Exception as exc:
-                        _log.error(
-                            "scheduler_fetch_and_publish_failed",
+                    # 1. Check if completed_bar is new and needs emission/storage
+                    last = self._last_emitted.get((instrument, timeframe))
+                    if last is None or completed_bar.timestamp > last:
+                        # Avoid duplicate writes
+                        self._save_to_store(instrument, timeframe, completed_bar)
+                        await self._bus.publish(BusChannel.OHLCV_BAR, completed_bar)
+                        self._last_emitted[(instrument, timeframe)] = completed_bar.timestamp
+                        _log.info(
+                            "ohlcv_bar_published",
                             instrument=instrument.value,
                             timeframe=timeframe.value,
-                            error=str(exc),
+                            bar_ts=str(completed_bar.timestamp),
+                            close=completed_bar.close,
                         )
 
-    async def _fetch_and_publish(
+                    # 2. Publish active ticking bar (incomplete bar, don't store)
+                    if active_bar is not None and active_bar.timestamp > completed_bar.timestamp:
+                        # Ensure we don't treat it as completed
+                        await self._bus.publish(BusChannel.OHLCV_BAR, active_bar)
+
+                except Exception as exc:
+                    _log.error(
+                        "scheduler_live_poll_failed",
+                        instrument=instrument.value,
+                        timeframe=timeframe.value,
+                        error=str(exc),
+                    )
+
+            # Sleep short duration for high-frequency spot ticking
+            await asyncio.sleep(5.0)
+
+    def _save_to_store(
         self,
         instrument: Instrument,
         timeframe: Timeframe,
+        bar: OHLCVBar,
     ) -> None:
-        """Fetch latest bar, validate, store, and publish to bus."""
-        try:
-            bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
-        except DataError as exc:
-            _log.error(
-                "scheduler_fetch_failed",
-                instrument=instrument.value,
-                timeframe=timeframe.value,
-                error=str(exc),
-            )
-            raise  # Fail loud
-
-        # Avoid publishing the same bar twice (e.g. if sleep drifted)
-        last = self._last_emitted.get((instrument, timeframe))
-        if last is not None and bar.timestamp <= last:
-            _log.debug(
-                "scheduler_duplicate_skipped",
-                instrument=instrument.value,
-                timeframe=timeframe.value,
-                bar_ts=str(bar.timestamp),
-            )
-            return
-
-        # Store bar in DataStore (best-effort — publish even if store fails)
+        """Store bar in DataStore."""
         try:
             row_df = pd.DataFrame(
                 {
@@ -352,10 +356,30 @@ class DataScheduler:
                 error=str(exc),
             )
 
-        # Publish to bus
+    async def _fetch_and_publish(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+    ) -> None:
+        """Legacy helper kept for backwards-compatibility with tests."""
+        try:
+            bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
+        except DataError as exc:
+            _log.error(
+                "scheduler_fetch_failed",
+                instrument=instrument.value,
+                timeframe=timeframe.value,
+                error=str(exc),
+            )
+            raise  # Fail loud
+
+        last = self._last_emitted.get((instrument, timeframe))
+        if last is not None and bar.timestamp <= last:
+            return
+
+        self._save_to_store(instrument, timeframe, bar)
         await self._bus.publish(BusChannel.OHLCV_BAR, bar)
         self._last_emitted[(instrument, timeframe)] = bar.timestamp
-
         _log.info(
             "ohlcv_bar_published",
             instrument=instrument.value,
