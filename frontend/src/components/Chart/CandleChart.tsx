@@ -357,6 +357,7 @@ export function CandleChart({
             layoutKey={layoutKey}
             onPositionInteractionChange={handlePositionInteractionChange}
             barTimesRef={barTimesRef}
+            timeframe={timeframe}
           />
         )}
       </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
 import type { Point, Drawing, DragState } from '../drawingTypes';
 import { findDrawingUnderCursor, isNearAnyHandle } from '../drawingUtils';
-import { findClosestBarIndex } from '../utils';
+import { drawingTimeToLogical, logicalToDrawingTime } from '../utils';
 
 interface Props {
   activeTool: 'select' | 'line' | 'box' | 'polyline' | 'eraser' | 'position' | 'fibonacci';
@@ -30,6 +30,7 @@ interface Props {
   onUpdateSLPrice?: (price: number) => void;
   onUpdateTPPrice?: (price: number) => void;
   barTimesRef: MutableRefObject<number[]>;
+  timeframe: string;
 }
 
 export function useDrawingInteractions({
@@ -59,6 +60,7 @@ export function useDrawingInteractions({
   onUpdateSLPrice,
   onUpdateTPPrice,
   barTimesRef,
+  timeframe,
 }: Props) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [tempPoints, setTempPoints] = useState<Point[]>([]);
@@ -254,13 +256,16 @@ export function useDrawingInteractions({
               if (d.id === dragState.drawingId) {
                 const newPoints = dragState.startDrawingPoints!.map((origPt) => {
                   if (barTimes.length > 0) {
-                    const startIdx = findClosestBarIndex(barTimes, dragState.startMousePoint!.time);
-                    const currentIdx = findClosestBarIndex(barTimes, pt.time);
-                    const deltaIdx = currentIdx - startIdx;
-                    const origIdx = findClosestBarIndex(barTimes, origPt.time);
-                    const newIdx = Math.max(0, Math.min(barTimes.length - 1, origIdx + deltaIdx));
+                    const startLogical = drawingTimeToLogical(
+                      dragState.startMousePoint!.time,
+                      barTimes,
+                      timeframe,
+                    );
+                    const currentLogical = drawingTimeToLogical(pt.time, barTimes, timeframe);
+                    const deltaLogical = currentLogical - startLogical;
+                    const origLogical = drawingTimeToLogical(origPt.time, barTimes, timeframe);
                     return {
-                      time: barTimes[newIdx],
+                      time: logicalToDrawingTime(origLogical + deltaLogical, barTimes, timeframe),
                       price: origPt.price + deltaPrice,
                     };
                   }

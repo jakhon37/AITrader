@@ -1,7 +1,7 @@
 import { useEffect, useState, type MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import type { Point } from '../drawingTypes';
-import { findClosestBarIndex } from '../utils';
+import { drawingTimeToLogical, logicalToDrawingTime } from '../utils';
 
 export function useCanvasPosition(
   chart: IChartApi,
@@ -9,6 +9,7 @@ export function useCanvasPosition(
   containerRef: React.RefObject<HTMLDivElement | null>,
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   barTimesRef: MutableRefObject<number[]>,
+  timeframe: string,
 ) {
   const [position, setPosition] = useState({ left: 0, top: 0, width: 0, height: 0 });
 
@@ -48,12 +49,11 @@ export function useCanvasPosition(
     let x: number | null = null;
 
     if (barTimes.length > 0) {
-      const idx = findClosestBarIndex(barTimes, pt.time);
-      if (idx !== -1) {
-        x = chart.timeScale().logicalToCoordinate(idx);
-        if (x === null) {
-          x = chart.timeScale().timeToCoordinate(barTimes[idx] as never);
-        }
+      const logical = drawingTimeToLogical(pt.time, barTimes, timeframe);
+      x = chart.timeScale().logicalToCoordinate(logical);
+      if (x === null) {
+        const idx = Math.max(0, Math.min(barTimes.length - 1, Math.round(logical)));
+        x = chart.timeScale().timeToCoordinate(barTimes[idx] as never);
       }
     } else {
       x = chart.timeScale().timeToCoordinate(pt.time as never);
@@ -78,8 +78,7 @@ export function useCanvasPosition(
     if (barTimes.length > 0) {
       const logical = chart.timeScale().coordinateToLogical(x);
       if (logical === null) return null;
-      const idx = Math.max(0, Math.min(barTimes.length - 1, Math.round(logical)));
-      time = barTimes[idx];
+      time = logicalToDrawingTime(logical, barTimes, timeframe);
     } else {
       const rawTime = chart.timeScale().coordinateToTime(x);
       if (rawTime === null) return null;

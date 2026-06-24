@@ -37,6 +37,7 @@ interface DrawingOverlayProps {
   layoutKey?: number;
   onPositionInteractionChange?: (active: boolean) => void;
   barTimesRef: MutableRefObject<number[]>;
+  timeframe: string;
 }
 
 export function DrawingOverlay({
@@ -70,6 +71,7 @@ export function DrawingOverlay({
   layoutKey = 0,
   onPositionInteractionChange,
   barTimesRef,
+  timeframe,
 }: DrawingOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rangeChangeKey, setRangeChangeKey] = useState(0);
@@ -85,6 +87,7 @@ export function DrawingOverlay({
     containerRef,
     canvasRef,
     barTimesRef,
+    timeframe,
   );
 
   // Subscribe to chart zoom / scroll to repaint the canvas
@@ -141,6 +144,7 @@ export function DrawingOverlay({
     onUpdateSLPrice,
     onUpdateTPPrice,
     barTimesRef,
+    timeframe,
   });
 
   const positionInteracting = useMemo(() => {

@@ -20,6 +20,62 @@ export type ChartViewportMode = 'auto' | 'fit-all';
 
 export const MAX_BUFFER = 20000;
 
+export const TIMEFRAME_SECONDS: Record<string, number> = {
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '30m': 1800,
+  '1h': 3600,
+  '4h': 14400,
+  '1d': 86400,
+  '1w': 604800,
+};
+
+/** Seconds per bar — uses the last gap in loaded data, falls back to nominal timeframe. */
+export function getBarStep(barTimes: readonly number[], timeframe: string): number {
+  if (barTimes.length >= 2) {
+    return barTimes[barTimes.length - 1] - barTimes[barTimes.length - 2];
+  }
+  return TIMEFRAME_SECONDS[timeframe] ?? 3600;
+}
+
+/** Map a stored drawing timestamp to a chart logical index (supports future extrapolation). */
+export function drawingTimeToLogical(
+  time: number,
+  barTimes: readonly number[],
+  timeframe: string,
+): number {
+  if (barTimes.length === 0) return 0;
+  const lastIdx = barTimes.length - 1;
+  const step = getBarStep(barTimes, timeframe);
+  if (time > barTimes[lastIdx] + step * 0.5) {
+    return lastIdx + (time - barTimes[lastIdx]) / step;
+  }
+  if (time < barTimes[0] - step * 0.5) {
+    return (time - barTimes[0]) / step;
+  }
+  return findClosestBarIndex(barTimes, time);
+}
+
+/** Map a chart logical index to a drawing timestamp (snaps history, extrapolates future). */
+export function logicalToDrawingTime(
+  logical: number,
+  barTimes: readonly number[],
+  timeframe: string,
+): number {
+  if (barTimes.length === 0) return 0;
+  const lastIdx = barTimes.length - 1;
+  const step = getBarStep(barTimes, timeframe);
+  if (logical > lastIdx + 0.5) {
+    return barTimes[lastIdx] + (logical - lastIdx) * step;
+  }
+  if (logical < -0.5) {
+    return barTimes[0] + logical * step;
+  }
+  const idx = Math.max(0, Math.min(lastIdx, Math.round(logical)));
+  return barTimes[idx];
+}
+
 export const PAGINATION_LOOKBACK: Record<string, number> = {
   '1m': 2,
   '5m': 7,
