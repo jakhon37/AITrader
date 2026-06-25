@@ -12,6 +12,7 @@ from src.core.bus import Bus
 from src.core.contracts import (
     BusChannel,
     Instrument,
+    MarketRegime,
     Timeframe,
     OHLCVBar,
     TechnicalSignal,
@@ -41,13 +42,21 @@ class TechnicalEngine:
     ) -> None:
         self.bus = bus
         self.store = store
-        self.instruments_config = instruments_config or load_instruments()
+        # instruments_config loaded fresh via property for hot-reload support
         self.enable_causal_filter = enable_causal_filter
         self.enable_order_flow = enable_order_flow
 
         self.loader = TechnicalDataLoader(store)
         self.is_running = False
         self.enabled = True
+
+    @property
+    def instruments_config(self) -> dict[Instrument, InstrumentConfig]:
+        """Always fresh from cache to support hot-reload on Apply."""
+        try:
+            return load_instruments()
+        except Exception:
+            return {}
 
     async def start(self) -> None:
         """Start the engine and subscribe to OHLCV_BAR channel."""

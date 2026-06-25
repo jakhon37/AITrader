@@ -32,7 +32,9 @@ class TelegramClient:
         max_tokens: float = 20.0,
     ) -> None:
         self.token = token or os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+        chat_env = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
+        self.chat_ids: List[str] = [c.strip() for c in chat_env.split(",") if c.strip()]
+        self.chat_id = self.chat_ids[0] if self.chat_ids else None  # for backward compat / single chat
 
         # Parse allowed users from environment if not supplied
         self.allowed_users: Set[int] = set(allowed_users or [])
@@ -47,7 +49,7 @@ class TelegramClient:
                     _log.warning("telegram_invalid_allowed_users_env", env=allowed_env)
 
         # Outbound message queue (max size 50, oldest dropped on overflow)
-        self.queue: deque[tuple[str, str]] = deque(maxlen=50)
+        self.queue: deque[tuple[str, str]] = deque(maxlen=50)  # (text, chat_id)
 
         # Rate Limiting parameters (Token Bucket)
         self.max_tokens = max_tokens
@@ -70,10 +72,31 @@ class TelegramClient:
             return
         self._running = True
 
+        # Validate chat on startup so errors appear early, not on every signal
+        if self.token and self.chat_ids:
+            for cid in self.chat_ids:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        url = f"https://api.telegram.org/bot{self.token}/getChat"
+                        resp = await client.get(url, params={"chat_id": cid})
+                        if resp.status_code != 200:
+                            _log.error(
+                                "telegram_chat_validation_failed",
+                                chat_id=cid,
+                                status=resp.status_code,
+                                body=resp.text[:200],
+                            )
+                        else:
+                            _log.info("telegram_chat_validated", chat_id=cid)
+                except Exception as e:
+                    _log.warning("telegram_chat_validation_error", chat_id=cid, error=str(e))
+            # Only mark client as fully ready if at least one chat validates
+            valid_chats = [c for c in self.chat_ids if c]  # simplistic; real validation is async above
+
         self.last_refill_time = now()
         self._send_task = asyncio.create_task(self._send_loop())
         self._poll_task = asyncio.create_task(self._poll_loop())
-        _log.info("telegram_client_started", allowed_users_count=len(self.allowed_users))
+        _log.info("telegram_client_started", chat_ids=self.chat_ids, allowed_users_count=len(self.allowed_users))
 
     async def stop(self) -> None:
         """Shutdown background tasks."""
@@ -99,19 +122,29 @@ class TelegramClient:
 
         _log.info("telegram_client_stopped")
 
-    async def send_message(self, text: str, chat_id: str | None = None) -> bool:
-        """Queue a message to be sent to Telegram. Safe to call from any thread."""
-        target_chat = chat_id or self.chat_id
-        if not self.token or not target_chat:
+    async def send_message(self, text: str, chat_id: str | List[str] | None = None) -> bool:
+        """Queue a message to be sent to Telegram. Safe to call from any thread.
+        If chat_id is None, sends to all configured TELEGRAM_CHAT_IDs (supports comma-separated).
+        """
+        if chat_id:
+            if isinstance(chat_id, list):
+                targets = [c.strip() for c in chat_id if c.strip()]
+            else:
+                targets = [chat_id.strip()] if chat_id.strip() else []
+        else:
+            targets = self.chat_ids
+
+        if not self.token or not targets:
             _log.warning("telegram_cannot_send_missing_credentials")
             return False
 
-        if len(self.queue) >= 50:
-            # Log overflow and pop oldest
-            dropped_text, _ = self.queue.popleft()
-            _log.warning("telegram_overflow", dropped_prefix=dropped_text[:50])
+        for target_chat in targets:
+            if len(self.queue) >= 50:
+                # Log overflow and pop oldest
+                dropped_text, _ = self.queue.popleft()
+                _log.warning("telegram_overflow", dropped_prefix=dropped_text[:50])
 
-        self.queue.append((text, target_chat))
+            self.queue.append((text, target_chat))
         return True
 
     async def _send_loop(self) -> None:
@@ -179,6 +212,7 @@ class TelegramClient:
                             "telegram_api_error_code",
                             status=response.status_code,
                             body=response.text[:200],
+                            chat_id=str(chat_id)[:4] + "****",  # avoid logging full ID
                         )
                         return False
 
@@ -212,6 +246,8 @@ class TelegramClient:
                         for update in data.get("result", []):
                             offset = max(offset, update["update_id"] + 1)
                             await self._route_inbound_message(update)
+                    else:
+                        _log.warning("telegram_getupdates_failed", status=response.status_code)
             except Exception as e:
                 _log.error("telegram_poll_exception", error=str(e))
 

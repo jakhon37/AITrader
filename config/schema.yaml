@@ -51,3 +51,10 @@ execution:
   broker: mock
   slippage_pips: 0.5
   rate_limit_per_min: 30
+
+fundamental:
+  sentiment_backend: mock   # finbert | mock | openrouter
+  poll_interval_seconds: 600
+  aggregation_window_minutes: 15
+  min_confidence_to_emit: 0.25
+  enable_structured_llm: true

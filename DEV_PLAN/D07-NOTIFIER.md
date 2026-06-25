@@ -112,7 +112,7 @@ notifier:
 ## Environment Variables Required
 ```
 TELEGRAM_BOT_TOKEN           # BotFather token; never log this
-TELEGRAM_CHAT_ID             # treat as secret; never log
+TELEGRAM_CHAT_ID             # comma-separated list supported for multiple chats; treat as secret
 ALLOWED_TELEGRAM_USER_IDS    # comma-separated Telegram user IDs
 ```
 

@@ -72,3 +72,30 @@ execution:
   broker: mock
   slippage_pips: 0.5
   rate_limit_per_min: 30
+
+notifier:
+  telegram:
+    # Relaxed for dev/testing — you will now receive neutral signals too.
+    # For production tighten: min_confidence 0.5+, directions only ["long","short"]
+    trade_signal:
+      enabled: true
+      min_confidence: 0.0
+      directions: ["long", "short", "neutral"]
+    fundamental_signal:
+      enabled: true
+      min_strength: "weak"
+    order_event:
+      enabled: true
+      event_types: ["filled", "rejected"]
+    system_health:
+      enabled: true
+      min_status: "ok"
+
+fundamental:
+  # On Intel 16GB Mac dev machines, prefer "mock" or "openrouter" to avoid heavy FinBERT RAM/CPU usage.
+  # Use "finbert" on GPU machines or when you want fully local high-quality scoring.
+  sentiment_backend: "mock"   # finbert | mock | openrouter
+  poll_interval_seconds: 600
+  aggregation_window_minutes: 15
+  min_confidence_to_emit: 0.25
+  enable_structured_llm: true

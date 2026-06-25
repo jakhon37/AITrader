@@ -7,6 +7,7 @@ to emit structured FundamentalSignals on the bus.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -54,7 +55,12 @@ class FundamentalAgent:
         self.store = store
 
         # Component instances (use parameter injection or default to standard configurations)
-        self.sentiment_scorer = sentiment_scorer or SentimentScorer()
+        if sentiment_scorer is None:
+            backend = getattr(getattr(config, "fundamental", None), "sentiment_backend", "mock")
+            api_key = os.environ.get("OPENROUTER_API_KEY") if backend == "openrouter" else None
+            self.sentiment_scorer = SentimentScorer(backend=backend, openrouter_api_key=api_key)
+        else:
+            self.sentiment_scorer = sentiment_scorer
         self.classifier = classifier or EventClassifier()
         self.filter = news_filter or NewsFilter()
 
@@ -76,6 +82,7 @@ class FundamentalAgent:
 
         self._running = False
         self._poll_task: Optional[asyncio.Task] = None
+        self._poll_interval: int = 600
         self._last_poll_time = now() - timedelta(minutes=15)
 
     async def start(self) -> None:
@@ -88,6 +95,9 @@ class FundamentalAgent:
         await self.bus.subscribe(BusChannel.ECONOMIC_EVENT, self.handle_economic_event)
 
         # Start periodic news poll loop (Path 1)
+        fund = getattr(self.config, "fundamental", None)
+        if fund is not None:
+            self._poll_interval = getattr(fund, "poll_interval_seconds", 600)
         self._poll_task = asyncio.create_task(self._poll_loop())
         _log.info("fundamental_agent_started")
 
@@ -116,8 +126,8 @@ class FundamentalAgent:
             except Exception as e:
                 _log.error("fundamental_agent_poll_error", error=str(e))
 
-            # Sleep 10 minutes
-            await asyncio.sleep(600)
+            # Sleep according to config
+            await asyncio.sleep(self._poll_interval)
 
     async def poll_news(self) -> None:
         """Query news from DataStore since last poll time and score/publish signals."""
@@ -145,7 +155,8 @@ class FundamentalAgent:
 
         # 2. Score articles (run in thread pool executor)
         texts_to_score = [f"{art.headline} {art.body_snippet or ''}" for art in kept_articles]
-        scores = await self.sentiment_scorer.score_batch(texts_to_score)
+        article_ids = [art.article_id for art in kept_articles]
+        scores = await self.sentiment_scorer.score_batch(texts_to_score, article_ids=article_ids)
 
         # 3. Classify and process into ScoredArticles
         scored_articles: List[ScoredArticle] = []
@@ -189,6 +200,11 @@ class FundamentalAgent:
         direction = self.classifier.determine_direction(avg_score)
         confidence = abs(avg_score)
         strength = self.classifier.determine_strength(confidence)
+
+        min_conf = getattr(getattr(self.config, "fundamental", None), "min_confidence_to_emit", 0.25)
+        if confidence < min_conf:
+            _log.debug("fundamental_signal_skipped_low_confidence", instrument=instrument.value, confidence=confidence)
+            return
 
         # Find the article with the highest absolute sentiment (the primary catalyst)
         primary_sa = max(articles, key=lambda sa: abs(sa.sentiment_score))
@@ -293,6 +309,11 @@ class FundamentalAgent:
             # Apply high impact multiplier
             impact_confidence = 0.8 if event.impact == "high" else 0.5 if event.impact == "medium" else 0.2
             confidence = min(1.0, abs(sentiment_score) * 0.5 + impact_confidence * 0.5)
+
+            min_conf = getattr(getattr(self.config, "fundamental", None), "min_confidence_to_emit", 0.25)
+            if confidence < min_conf:
+                _log.debug("fundamental_econ_signal_skipped_low_conf", instrument=inst.value, confidence=confidence)
+                continue
 
             direction = self.classifier.determine_direction(sentiment_score)
             strength = self.classifier.determine_strength(confidence)

@@ -7,7 +7,7 @@ interface HealthStatus { status: string; divisions: Record<string, HealthDiv>; }
 interface SignalsStore {
   tradeSignals: TradeSignal[];
   fundamentalSignals: FundamentalSignal[];
-  technicalSignal: TechnicalSignal | null;
+  technicalByInstrument: Record<string, TechnicalSignal>;
   healthStatus: HealthStatus;
   wsConnected: boolean;
   addTradeSignal: (s: TradeSignal) => void;
@@ -19,15 +19,28 @@ interface SignalsStore {
   setWsConnected: (connected: boolean) => void;
 }
 
+function instrumentKey(value: string | { value?: string } | undefined): string {
+  if (!value) return '';
+  if (typeof value === 'string') return value.toUpperCase();
+  return String(value.value ?? '').toUpperCase();
+}
+
 export const useSignalsStore = create<SignalsStore>((set) => ({
   tradeSignals: [],
   fundamentalSignals: [],
-  technicalSignal: null,
+  technicalByInstrument: {},
   healthStatus: { status: 'ok', divisions: {} },
   wsConnected: false,
   addTradeSignal: (s) => set((state) => ({ tradeSignals: [s, ...state.tradeSignals.slice(0, 49)] })),
   addFundamentalSignal: (s) => set((state) => ({ fundamentalSignals: [s, ...state.fundamentalSignals.slice(0, 49)] })),
-  setTechnicalSignal: (s) => set({ technicalSignal: s }),
+  setTechnicalSignal: (s) =>
+    set((state) => {
+      const key = instrumentKey(s.instrument as string | { value?: string });
+      if (!key) return state;
+      return {
+        technicalByInstrument: { ...state.technicalByInstrument, [key]: s },
+      };
+    }),
   setHealthDiv: (div) => set((state) => {
     const divisions = { ...state.healthStatus.divisions, [div.division]: div };
     let status = 'ok';

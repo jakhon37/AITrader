@@ -11,6 +11,7 @@ from src.core.config import (  # noqa: F401 — re-export for migration window
     CoreConfig,
     DataConfig,
     ExecutionConfig,
+    FundamentalConfig,
     InstrumentConfig,
     ModelConfig,
     RiskConfig,

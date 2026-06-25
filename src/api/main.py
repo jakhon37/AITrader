@@ -50,11 +50,20 @@ from src.core.logging import get_logger
 from src.core.contracts import Instrument, Timeframe
 from src.data.feeds.dukascopy import DukascopyFeed
 from src.data.pipeline.auto_refresh import DataRefreshWorker
+from src.core.config import load_instruments
 from src.core.instruments import get_enabled_instruments
 from src.data.scheduler import DataScheduler
 from src.data.store import DataStore
+from src.data.sources.news_fetcher import NewsFetcher
+from src.data.sources.calendar import CalendarFetcher
+from src.data.sources.fred import FredFetcher
+from src.decision.engine import DecisionEngine
 from src.execution.engine import ExecutionEngine
+from src.technical.engine import TechnicalEngine
+from src.fundamental.agent import FundamentalAgent
+from src.notifier.service import NotifierService
 import asyncio
+import os
 
 _log = get_logger("D10-WEBUI")
 
@@ -78,11 +87,32 @@ async def lifespan(app: FastAPI):
     await setup_ws_bridge(bus)
 
     # 4. Instantiate Execution Engine (runs in-process for paper trading)
+    # Broker selection from config (currently falls back to SimBroker/mock until MT5/IBKR adapters are implemented)
+    configured_broker = getattr(app_config.execution, 'broker', 'mock')
     engine = ExecutionEngine(config=app_config, bus=bus)
     app.state.engine = engine
     engine.start()
+    _log.info("execution_engine_started", configured_broker=configured_broker, active="sim")
 
-    # 5. Initialize Live Clock & DataScheduler
+    # 5. Live signal spine: OHLCV_BAR → TechnicalSignal → TradeSignal
+    technical_engine = TechnicalEngine(
+        bus=bus,
+        store=data_store,
+        instruments_config=load_instruments(),
+    )
+    decision_engine = DecisionEngine(config=app_config, bus=bus)
+    app.state.technical_engine = technical_engine
+    app.state.decision_engine = decision_engine
+    app.state.live_signal_pipeline_paused = False
+    await technical_engine.start()
+    await decision_engine.start()
+    _log.info(
+        "live_signal_spine_started",
+        technical="D04",
+        decision="D05",
+    )
+
+    # 6. Initialize Live Clock & DataScheduler
     clock = LiveClock()
     set_clock(clock)
     pipeline = app_config.data.pipeline
@@ -110,11 +140,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.scheduler = scheduler
 
-    # 6. Start the DataScheduler background task
+    # 7. Start the DataScheduler background task
     scheduler_task = asyncio.create_task(scheduler.run())
     app.state.scheduler_task = scheduler_task
 
-    # 7. Automatic Dukascopy tail refresh (startup + hourly)
+    # 8. Automatic Dukascopy tail refresh (startup + hourly)
     refresh_worker = DataRefreshWorker(
         store=data_store,
         cfg=app_config,
@@ -124,6 +154,64 @@ async def lifespan(app: FastAPI):
     app.state.refresh_worker = refresh_worker
     await refresh_worker.start()
 
+    # 9. D02 + D03 Fundamental data pipeline (news + calendar + agent)
+    # These were not started previously. Now wired as part of revised D03 plan.
+    fund_cfg = getattr(app_config, "fundamental", None)
+    news_poll = getattr(fund_cfg, "poll_interval_seconds", 600) if fund_cfg else 600
+
+    news_fetcher = NewsFetcher(
+        store=data_store,
+        clock=clock,
+        newsapi_key=os.environ.get("NEWSAPI_KEY"),
+        poll_interval_seconds=news_poll,
+    )
+    app.state.news_fetcher = news_fetcher
+    news_task = asyncio.create_task(news_fetcher.run())
+    app.state.news_task = news_task
+
+    calendar_fetcher = CalendarFetcher(
+        store=data_store,
+        bus=bus,
+        clock=clock,
+        poll_interval_seconds=3600,
+    )
+    app.state.calendar_fetcher = calendar_fetcher
+    calendar_task = asyncio.create_task(calendar_fetcher.run())
+    app.state.calendar_task = calendar_task
+
+    # FundamentalAgent (D03) — uses pluggable backend from config (mock recommended on 16GB Intel Mac)
+    fundamental_agent = FundamentalAgent(
+        config=app_config,
+        bus=bus,
+        store=data_store,
+    )
+    app.state.fundamental_agent = fundamental_agent
+    await fundamental_agent.start()
+    _log.info("fundamental_pipeline_started", backend=getattr(fund_cfg, "sentiment_backend", "mock") if fund_cfg else "mock")
+
+    # 10. Additional D02 APIs from .env (FRED macro data)
+    if os.environ.get("FRED_API_KEY"):
+        fred_fetcher = FredFetcher(
+            data_base_dir=app_config.data.data_dir,
+            clock=clock,
+            api_key=os.environ.get("FRED_API_KEY"),
+        )
+        app.state.fred_fetcher = fred_fetcher
+        fred_task = asyncio.create_task(fred_fetcher.run())
+        app.state.fred_task = fred_task
+        _log.info("fred_fetcher_started")
+    else:
+        _log.info("fred_fetcher_skipped_no_key")
+
+    # 11. D07 Notifier (Telegram) if keys present
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        notifier = NotifierService(config=app_config, bus=bus)
+        app.state.notifier = notifier
+        await notifier.start()
+        _log.info("notifier_service_started")
+    else:
+        _log.info("notifier_skipped_no_telegram_key")
+
     # Initialize active replay session placeholder
     app.state.active_replay_session = None
 
@@ -132,15 +220,35 @@ async def lifespan(app: FastAPI):
 
     # Cleanup / Shutdown
     await refresh_worker.stop()
+    await technical_engine.stop()
+    await decision_engine.stop()
     engine.stop()
     scheduler.stop()
-    try:
-        await asyncio.wait_for(scheduler_task, timeout=5.0)
-    except asyncio.TimeoutError:
-        _log.warning("scheduler_shutdown_timeout")
-        scheduler_task.cancel()
-    except Exception as e:
-        _log.exception("scheduler_shutdown_error", error=str(e))
+
+    # D02/D03/D07 cleanup
+    if "fundamental_agent" in app.state and app.state.fundamental_agent:
+        await app.state.fundamental_agent.stop()
+    if "news_fetcher" in app.state and app.state.news_fetcher:
+        app.state.news_fetcher.stop()
+    if "calendar_fetcher" in app.state and app.state.calendar_fetcher:
+        app.state.calendar_fetcher.stop()
+    if "fred_fetcher" in app.state and app.state.fred_fetcher:
+        app.state.fred_fetcher.stop()
+    if "notifier" in app.state and app.state.notifier:
+        await app.state.notifier.stop()
+
+    # Wait on tasks
+    for task_name in ("scheduler_task", "news_task", "calendar_task", "fred_task"):
+        task = getattr(app.state, task_name, None)
+        if task:
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except asyncio.TimeoutError:
+                _log.warning(f"{task_name}_shutdown_timeout")
+                task.cancel()
+            except Exception as e:
+                _log.exception(f"{task_name}_shutdown_error", error=str(e))
+
     _log.info("webui_api_shutdown")
 
 

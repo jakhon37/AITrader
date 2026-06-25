@@ -11,11 +11,11 @@ import { NewsFeed } from '../Panels/NewsFeed';
 import { Portfolio } from '../Panels/Portfolio';
 import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
-import { focusChartPair, getDataInstruments, releaseReplaySession } from '../../api/client';
+import { focusChartPair, getDataInstruments, getLatestSignals, getTradeSignals, releaseReplaySession } from '../../api/client';
+import { useSignalsStore } from '../../store/signals';
 import { useLiveChartStatus } from '../../hooks/useLiveChartStatus';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { LiveChartStatus } from './LiveChartStatus';
-import { useSignalsStore } from '../../store/signals';
 import { ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 
 interface TradingTerminalProps {
@@ -31,6 +31,9 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
     return saved === 'fit-all' ? 'fit-all' : 'auto';
   });
   const connected = useSignalsStore((state) => state.wsConnected);
+  const initTradeSignals = useSignalsStore((state) => state.initTradeSignals);
+  const setTechnicalSignal = useSignalsStore((state) => state.setTechnicalSignal);
+  const addTradeSignal = useSignalsStore((state) => state.addTradeSignal);
   const { timezone, setTimezone, displayLabel } = useChartTimezone();
   const liveStatus = useLiveChartStatus(instrument, timeframe, connected);
   usePortfolio();
@@ -46,6 +49,21 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
       /* chart still loads from store if focus call fails */
     });
   }, [instrument, timeframe]);
+
+  useEffect(() => {
+    getTradeSignals()
+      .then((signals) => initTradeSignals(Array.isArray(signals) ? signals : []))
+      .catch(() => {});
+  }, [initTradeSignals]);
+
+  useEffect(() => {
+    getLatestSignals(instrument)
+      .then((payload) => {
+        if (payload?.technical) setTechnicalSignal(payload.technical);
+        if (payload?.trade) addTradeSignal(payload.trade);
+      })
+      .catch(() => {});
+  }, [instrument, setTechnicalSignal, addTradeSignal]);
 
   useEffect(() => {
     getDataInstruments()
@@ -323,7 +341,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
             </div>
             {!indicatorCollapsed && (
               <div style={{ flex: 1, minHeight: 0, padding: 8 }}>
-                <IndicatorPanel />
+                <IndicatorPanel instrument={instrument} timeframe={timeframe} />
               </div>
             )}
           </div>

@@ -100,6 +100,13 @@ class ExecutionEngine:
             state_file=state_file_path,
         )
 
+        broker_type = getattr(self.config, 'broker', 'mock')
+        if broker_type != 'mock':
+            logger.warning(
+                f"Requested broker '{broker_type}' (from .env/config) is not yet implemented. "
+                "Falling back to SimBroker (paper simulation). "
+                "MT5/IBKR/OANDA adapters coming soon."
+            )
         self.broker = SimBroker(
             initial_cash=self.config.initial_capital,
             lot_size=100000.0,

@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrastructure, backtest/replay, and the Web UI terminal are operational. The **live chart + Dukascopy data pipeline** is the current focus area (D02 stabilization). The **live signal pipeline** (Technical → Decision → Execution on the bus) is implemented as modules but **not yet wired** into the Web UI process.
+AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrastructure, backtest/replay, and the Web UI terminal are operational. The **live chart + Dukascopy data pipeline** (D02) is stabilized. The **live signal spine** (OHLCV_BAR → TechnicalEngine → DecisionEngine → Fusion panel + Signal Log) is wired in `main.py`.
 
 | Milestone | Status |
 |-----------|--------|
@@ -13,7 +13,7 @@ AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrast
 | Phase 2 — D04 + D08 | ✅ Done |
 | Phase 3 — D03 + D07 | 🔶 Code exists; not live in WebUI |
 | Phase 4 — D05 + D06 | 🔶 Code + unit tests; not end-to-end in terminal |
-| Phase 5 — D10 Web UI | ✅ Charts/data/replay; signal panels await bus wiring |
+| Phase 5 — D10 Web UI | ✅ Charts/data/replay + live fusion panels |
 | Phase 6+ — D09 ML, D11 OPS, live broker | 🔴 Future |
 
 ---
@@ -25,9 +25,9 @@ AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrast
 | **D01** | CORE | ✅ Complete | `contracts.py`, bus, clock, `instruments.yaml` loader, session helpers |
 | **D02** | DATA | 🔶 **Stabilizing** | Dukascopy live poll, auto-refresh, 4 instruments, adaptive poll, gap-fill. Tier 1 polish active. |
 | **D03** | FUNDAMENTAL | 🔶 Partial | `FundamentalAgent` + tests; not started in `main.py` lifespan |
-| **D04** | TECHNICAL | ✅ Complete | `TechnicalEngine`; not subscribed to live bus in WebUI |
-| **D05** | DECISION | 🔶 Partial | `DecisionEngine` + tests; no live `TradeSignal` publisher |
-| **D06** | EXECUTION | 🔶 Partial | `ExecutionEngine` runs in WebUI (paper); awaits live trade signals |
+| **D04** | TECHNICAL | ✅ Complete | `TechnicalEngine` subscribed to live `OHLCV_BAR` in WebUI |
+| **D05** | DECISION | 🔶 Partial | `DecisionEngine` live; publishes `TradeSignal` (fundamental=None) |
+| **D06** | EXECUTION | 🔶 Partial | `ExecutionEngine` runs in WebUI (paper); receives live trade signals |
 | **D07** | NOTIFIER | 🔶 Partial | Telegram modules + tests; service not started |
 | **D08** | BACKTEST | ✅ Complete | Replay, CPCV, manual mode, HTML reports |
 | **D09** | TRAINER | 🔶 Legacy | Model registry (22 versions); not wired to live fusion |
@@ -45,6 +45,14 @@ AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrast
 | Deployment | `config/dev.yaml` | Pipeline cadence, model, risk (no per-pair trading rules) |
 
 ---
+
+## Hardware Note (Development)
+Primary dev machine: 2020 Intel MacBook Pro 16GB RAM.
+- FinBERT is supported but will default to disabled or mock mode.
+- OpenRouter is the practical path for narratives and optional sentiment on this hardware.
+- Full local FinBERT is intended for GPU-equipped machines and production.
+
+See D03-FUNDAMENTAL.md for pluggable backend strategy.
 
 ## D02 live data — what works today
 
@@ -79,34 +87,69 @@ AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrast
 ```
 Dukascopy → DataStore → /api/data/ohlcv → Chart
                 ↑
-         DataScheduler → OHLCV_BAR → WebSocket → Chart
-
-NOT wired yet:
-  OHLCV_BAR → TechnicalEngine → DecisionEngine → TradeSignal → Fusion panel
+         DataScheduler → OHLCV_BAR ─┬→ WebSocket → Chart
+                                   ├→ TechnicalEngine → TECHNICAL_SIGNAL
+                                   │         ↓
+                                   │   DecisionEngine → TRADE_SIGNAL
+                                   │         ↓
+                                   └→ ExecutionEngine (paper) + WS → Fusion / Signal Log
 ```
 
-`src/api/main.py` starts: Bus, DataScheduler, ExecutionEngine, DataRefreshWorker.  
-Does **not** start: TechnicalEngine, FundamentalAgent, DecisionEngine.
+`src/api/main.py` starts: Bus, DataScheduler, TechnicalEngine, DecisionEngine, ExecutionEngine, DataRefreshWorker.  
+Does **not** start: FundamentalAgent, Telegram notifier.
+
+**Note:** Technical fusion runs on each instrument's **primary timeframe** close (typically 1h), not on every chart TF switch. Replay pauses the live spine via `signal_pipeline.py`.
 
 ---
 
 ## What is next (priority order)
 
-### Tier 2 — Live signal spine (~1 week)
+### Tier 2 — Live signal spine ✅ Done (2026-06-25)
 
-Wire in `main.py`:
+- `TechnicalEngine` + `DecisionEngine` in `main.py` lifespan
+- `GET /api/signals/latest?instrument=` for bootstrap
+- Fusion panel + Signal Log via WebSocket (`technical_signal`, `trade_signal`)
+- Replay pause/resume in `replay.py`
+- Tests: `tests/unit/test_live_signal_spine.py`
 
-1. `TechnicalEngine` subscribes to `OHLCV_BAR` → `TechnicalSignal`
-2. `DecisionEngine` → `TradeSignal` (fundamental=None OK initially)
-3. Fusion panel + Signal Log populate via existing WebSocket bridge
+### Tier 3 — Phase 3 (D03 + D07, ~2–3 weeks) — **Revised Plan (2026-06-25)**
 
-**Milestone:** Terminal shows live technical fusion on chart instrument.
+**Key Decisions** (see `D03-FUNDAMENTAL.md` for full details):
+- Sentiment backend is now **pluggable** (`finbert` / `mock` / `openrouter`).
+- Development hardware (Intel 16GB Mac) will primarily use mock + OpenRouter LLM path.
+- GPU / production deployments will use local FinBERT.
+- Explicitly **no** CrewAI or heavy LLM agent frameworks.
+- Full wiring of ingestion + processing into live + replay.
 
-### Tier 3 — Phase 3 (D03 + D07, ~2–3 weeks)
+#### Priorities
+- Make sentiment scoring **pluggable**:
+  - `finbert` (local, high-quality, preferred on GPU)
+  - `mock` (fast dev)
+  - `openrouter` (LLM API fallback using structured output)
+- On current dev hardware (Intel 16GB Mac): default to `mock` + OpenRouter.
+- On GPU / production devices: enable real FinBERT.
+- **Do not** use CrewAI / heavy agent frameworks (too heavy, non-deterministic, costly for free-tier OpenRouter, conflicts with replay determinism and explicit bus architecture).
+- Wire `FundamentalAgent` (revised) into:
+  - Live WebUI (`src/api/main.py`)
+  - Modern replay (`src/backtest/replay/strategy/`)
+- Start supporting ingestion services: `NewsFetcher` + `CalendarFetcher`
+- Improve:
+  - Push-preferring triggers (calendar events + optional news events)
+  - Caching for sentiment scores
+  - Time-weighted aggregation + calendar correlation
+  - Macro regime quality
+  - Structured LLM usage on OpenRouter (narrative + optional sentiment)
+- Ensure replay can feed historical data deterministically
+- Add basic integration test that `FUNDAMENTAL_SIGNAL` flows through the spine
 
-- Wire `FundamentalAgent` into live + replay
-- Telegram notifier service
-- Replay bus gets historical fundamental signals
+#### Deliverables
+- Configurable `fundamental.sentiment_backend`
+- FundamentalAgent + components updated per revised design
+- News + Calendar fetchers started in main lifespan
+- Replay support for historical fundamentals
+- Updated UI / API surfaces can now receive real fundamental signals
+
+See full revised plan in [D03-FUNDAMENTAL.md](D03-FUNDAMENTAL.md).
 
 ### Tier 4 — Phase 4 full paper loop (~2 weeks)
 

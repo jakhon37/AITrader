@@ -50,17 +50,31 @@ class DecisionEngine:
         # Cache portfolio state for position sizer equity references
         self._portfolio_cache: Optional[PortfolioState] = None
 
-        # Load instrument configurations
+        # Load instrument configurations (reloaded from cache on demand for hot updates via /config)
+        self._instrument_configs: dict[Instrument, InstrumentConfig] = {}
         try:
-            self.instrument_configs = load_instruments()
+            self._instrument_configs = load_instruments()
         except Exception:
             _log.warning(
                 "decision_engine_instruments_load_fallback",
                 details="Could not load config/instruments.yaml, using empty configs.",
             )
-            self.instrument_configs = {}
+            self._instrument_configs = {}
 
         self._running = False
+
+    @property
+    def instrument_configs(self) -> dict[Instrument, InstrumentConfig]:
+        """Return fresh instrument configs on each access to support live config updates (Apply button)."""
+        try:
+            return load_instruments()
+        except Exception:
+            _log.warning("decision_engine_instruments_load_fallback")
+            return {}
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
 
     async def start(self) -> None:
         """Start subscriptions to necessary bus channels."""

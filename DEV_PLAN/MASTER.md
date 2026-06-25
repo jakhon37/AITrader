@@ -216,10 +216,8 @@ that consumes them:
   `OPENROUTER_DAILY_BUDGET`
 - D06: `OANDA_API_KEY`, `OANDA_ACCOUNT_ID` (live mode only),
   `LIVE_TRADING_CONFIRMED` (shell only, never `.env` — see Safety Gates above)
-- D07: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (both treated as secrets, redacted from
-  logs), `ALLOWED_TELEGRAM_USER_IDS`
-See `.env.example`. Each division MD's "Environment Variables Required" section is the
-source of truth if this list and a division MD ever disagree — update this list to match.
+- D07: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (comma-separated list ok for multiple destinations; secrets), `ALLOWED_TELEGRAM_USER_IDS`
+See `.env.example` (comprehensive and grouped by division). Each division MD's "Environment Variables Required" section is the source of truth. Update both when adding new integrations (e.g. MT5, IBKR).
 
 ### Logging
 Structured JSON logging everywhere using Python `structlog` or `logging` with a JSON

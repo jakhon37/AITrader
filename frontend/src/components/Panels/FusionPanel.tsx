@@ -9,8 +9,10 @@ interface FusionPanelProps {
 
 export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: FusionPanelProps) {
   const tradeSignals = useSignalsStore((s) => s.tradeSignals);
-  const technicalSignal = useSignalsStore((s) => s.technicalSignal);
-  const latest = tradeSignals.find((s) => s.instrument === instrument) ?? tradeSignals[0];
+  const technicalSignal = useSignalsStore((s) => s.technicalByInstrument[instrument.toUpperCase()]);
+  const latest =
+    tradeSignals.find((s) => String(s.instrument).toUpperCase() === instrument.toUpperCase())
+    ?? tradeSignals[0];
 
   const dirColor = (dir: string) => dir === 'long' ? 'var(--neon-green)' : dir === 'short' ? 'var(--neon-red)' : 'var(--text-muted)';
 

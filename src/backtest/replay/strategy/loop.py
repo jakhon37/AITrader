@@ -21,6 +21,8 @@ from src.backtest.feed import DataFeed
 from src.backtest.engine import MockDecisionEngine, MockExecutionEngine
 from src.backtest.replay._utils import get_buffer_duration
 from src.technical.engine import TechnicalEngine
+from src.fundamental.agent import FundamentalAgent
+from src.core.config import load_config
 
 if TYPE_CHECKING:
     pass  # avoid circular imports; mixin relies on BaseReplaySession attrs at runtime
@@ -71,6 +73,21 @@ class StrategyLoopMixin:
         await self.tech_engine.start()
         await decision_engine.start()
         await exec_engine.start()
+
+        # D03 Fundamental for replay (use mock for deterministic historical runs)
+        try:
+            replay_fund_cfg = load_config() if hasattr(load_config, '__call__') else None
+            fund_agent = FundamentalAgent(
+                config=replay_fund_cfg or type('obj', (object,), {'fundamental': type('f', (object,), {'sentiment_backend': 'mock'})() })(),
+                bus=self.bus,
+                store=self.store,
+            )
+            # Force mock for replay
+            fund_agent.sentiment_scorer = type(fund_agent.sentiment_scorer)(backend='mock')
+            await fund_agent.start()
+            # we don't store it long term, it will publish to the isolated bus
+        except Exception:
+            pass  # non-fatal in replay for now
 
         # ── Initial bar buffer ───────────────────────────────────────────
         buffer_dur = get_buffer_duration(self.timeframe_enum)  # type: ignore[attr-defined]

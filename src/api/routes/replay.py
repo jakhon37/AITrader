@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.api.signal_pipeline import pause_live_signal_pipeline, resume_live_signal_pipeline
 from src.core.contracts import Instrument, OrderSide
 from src.backtest.replay import StrategyReplaySession, ManualReplaySession
 
@@ -162,8 +163,14 @@ async def start_replay(request: Request, body: StartReplayRequest) -> Dict[str, 
     else:
         raise HTTPException(status_code=400, detail="Mode must be 'watch' or 'manual'.")
 
-    request.app.state.active_replay_session = session
-    await session.start()
+    await pause_live_signal_pipeline(request.app)
+    try:
+        request.app.state.active_replay_session = session
+        await session.start()
+    except Exception:
+        request.app.state.active_replay_session = None
+        await resume_live_signal_pipeline(request.app)
+        raise
 
     return {"status": "success", "session": session.state.to_dict()}
 
@@ -353,6 +360,8 @@ async def release_replay(request: Request) -> Dict[str, Any]:
     if scheduler:
         scheduler.reset_last_emitted()
 
+    await resume_live_signal_pipeline(request.app)
+
     return {"status": "success", "had_session": had_session}
 
 
@@ -370,6 +379,7 @@ async def stop_replay(request: Request) -> Dict[str, Any]:
         await session.stop()
 
     request.app.state.active_replay_session = None
+    await resume_live_signal_pipeline(request.app)
     return {"status": "success", "report": report}
 
 

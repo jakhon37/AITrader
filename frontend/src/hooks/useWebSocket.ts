@@ -20,6 +20,7 @@ export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_INITIAL_MS);
   const isMounted = useRef(true);
+  const connectGenRef = useRef(0);
 
   const { addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setWsConnected } = useSignalsStore();
   const { setPortfolio } = usePortfolioStore();
@@ -29,11 +30,15 @@ export function useWebSocket() {
 
     function connect() {
       if (!isMounted.current) return;
+      const gen = ++connectGenRef.current;
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (!isMounted.current) return;
+        if (!isMounted.current || gen !== connectGenRef.current) {
+          ws.close();
+          return;
+        }
         setConnected(true);
         setWsConnected(true);
         reconnectDelay.current = RECONNECT_INITIAL_MS;
@@ -101,7 +106,7 @@ export function useWebSocket() {
       };
 
       ws.onclose = () => {
-        if (!isMounted.current) return;
+        if (!isMounted.current || gen !== connectGenRef.current) return;
         setConnected(false);
         setWsConnected(false);
         const delay = reconnectDelay.current;
@@ -109,18 +114,27 @@ export function useWebSocket() {
         setTimeout(connect, delay);
       };
 
-      ws.onerror = () => { ws.close(); };
+      ws.onerror = () => {
+        if (gen !== connectGenRef.current) return;
+        ws.close();
+      };
     }
 
     connect();
     return () => {
       isMounted.current = false;
+      connectGenRef.current += 1;
       const ws = wsRef.current;
+      wsRef.current = null;
       if (!ws) return;
+      ws.onopen = null;
+      ws.onmessage = null;
       ws.onclose = null;
       ws.onerror = null;
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      if (ws.readyState === WebSocket.OPEN) {
         ws.close();
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        ws.addEventListener('open', () => ws.close(), { once: true });
       }
     };
   }, [addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setPortfolio, setWsConnected]);

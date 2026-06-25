@@ -60,6 +60,13 @@ export async function getTradeSignals() {
   return res.json();
 }
 
+export async function getLatestSignals(instrument: string) {
+  const params = new URLSearchParams({ instrument });
+  const res = await fetch(`${API_BASE}/signals/latest?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch latest signals');
+  return res.json();
+}
+
 export async function getFundamentalSignals() {
   const res = await fetch(`${API_BASE}/signals/fundamental`);
   if (!res.ok) throw new Error('Failed to fetch fundamental signals');

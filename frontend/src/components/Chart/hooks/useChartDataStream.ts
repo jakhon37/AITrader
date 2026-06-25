@@ -113,21 +113,29 @@ export function useChartDataStream(
     dataRef.current = sanitized;
     syncBarTimes();
 
-    cs.setData(sanitized.map((d) => ({
-      time: d.time as Time,
-      open: d.open,
-      high: d.high,
-      low: d.low,
-      close: d.close,
-    })));
-    vs.setData(sanitized.map((d) => ({
-      time: d.time as Time,
-      value: d.volume ?? 0,
-      color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
-    })));
+    try {
+      cs.setData(sanitized.map((d) => ({
+        time: d.time as Time,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      })));
+      vs.setData(sanitized.map((d) => ({
+        time: d.time as Time,
+        value: d.volume ?? 0,
+        color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
+      })));
+    } catch {
+      return;
+    }
 
     if (followLive && c && !isReplayMode()) {
-      applyChartViewport(c, sanitized, timeframe, { mode: viewportMode });
+      try {
+        applyChartViewport(c, sanitized, timeframe, { mode: viewportMode });
+      } catch {
+        /* chart disposed during React Strict Mode remount */
+      }
     }
 
     emitChartBarsUpdated(instrument, timeframe, sanitized);
@@ -190,6 +198,8 @@ export function useChartDataStream(
   useEffect(() => {
     if (!chart || !candleSeries || !volumeSeries) return;
 
+    let cancelled = false;
+
     paginationRef.current = {
       isFetching: false,
       hasMoreHistory: true,
@@ -208,6 +218,7 @@ export function useChartDataStream(
 
       getOHLCV(instrument, timeframe, start, end)
         .then((data: any[]) => {
+          if (cancelled) return;
           const filtered = filterChartBars(Array.isArray(data) ? data : [], { replayMode, instrument });
 
           const minBars = MIN_BARS_FOR_LOAD[timeframe] ?? DEFAULT_MIN_BARS;
@@ -232,7 +243,11 @@ export function useChartDataStream(
           }
 
           applyBarsToSeries(finalData);
-          applyChartViewport(chart, finalData, timeframe, { mode: viewportMode, anchorTime });
+          try {
+            applyChartViewport(chart, finalData, timeframe, { mode: viewportMode, anchorTime });
+          } catch {
+            /* chart disposed during React Strict Mode remount */
+          }
 
           if (!replayMode) {
             const last = finalData[finalData.length - 1];
@@ -250,6 +265,10 @@ export function useChartDataStream(
 
     const lookbackDays = LOOKBACK[timeframe] ?? 30;
     fetchWithLookback(lookbackDays, 1);
+
+    return () => {
+      cancelled = true;
+    };
   }, [chart, candleSeries, volumeSeries, instrument, timeframe, reloadKey, applyBarsToSeries, refetchRecentGap, viewportMode]);
 
   useEffect(() => {

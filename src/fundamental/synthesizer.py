@@ -8,8 +8,8 @@ on error/timeout.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
-from typing import Any, Dict, List
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -19,6 +19,85 @@ from src.core.logging import get_logger
 
 _log = get_logger("D03-FUNDAMENTAL")
 
+# Preferred free models on OpenRouter (ordered by preference/quality)
+# These are commonly available on free tier but can go offline.
+PREFERRED_FREE_MODELS: List[str] = [
+    "mistralai/mistral-7b-instruct:free",
+    "google/gemma-2-9b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "microsoft/phi-3-mini-128k-instruct:free",
+    "huggingfaceh4/zephyr-7b-beta:free",
+]
+
+# Simple cache for available models
+_available_models_cache: Dict[str, Any] = {"models": [], "fetched_at": None}
+_CACHE_TTL = timedelta(minutes=15)
+
+
+async def _fetch_available_models(api_key: Optional[str] = None) -> List[str]:
+    """Fetch list of models from OpenRouter and return their IDs."""
+    url = "https://openrouter.ai/api/v1/models"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return [m["id"] for m in data.get("data", [])]
+    except Exception as e:
+        _log.warning("openrouter_models_fetch_failed", error=str(e))
+        return []
+
+
+async def get_available_free_models(api_key: Optional[str] = None, force_refresh: bool = False) -> List[str]:
+    """Return currently available free models on OpenRouter (cached)."""
+    now_dt = now()
+    cache = _available_models_cache
+
+    if (
+        not force_refresh
+        and cache["models"]
+        and cache["fetched_at"]
+        and (now_dt - cache["fetched_at"]) < _CACHE_TTL
+    ):
+        return cache["models"]
+
+    all_models = await _fetch_available_models(api_key)
+    free_models = [m for m in all_models if ":free" in m or m.endswith(":free")]
+
+    cache["models"] = free_models
+    cache["fetched_at"] = now_dt
+    _log.info("openrouter_free_models_refreshed", count=len(free_models))
+    return free_models
+
+
+async def select_available_free_model(
+    preferred: Optional[List[str]] = None,
+    api_key: Optional[str] = None,
+) -> str:
+    """Pick the first preferred free model that is currently available.
+    Falls back to first available free model or a hardcoded default.
+    """
+    prefs = preferred or PREFERRED_FREE_MODELS
+    available_free = await get_available_free_models(api_key)
+
+    # Try preferred first
+    for model in prefs:
+        if model in available_free:
+            return model
+
+    # Any free model as fallback
+    if available_free:
+        # Prefer ones with good context if possible, but simple pick first
+        return available_free[0]
+
+    # Ultimate fallback
+    _log.warning("openrouter_no_free_models_found", using_fallback=prefs[0])
+    return prefs[0]
+
 
 class NarrativeSynthesizer:
     """Best-effort async client for OpenRouter to synthesize sentiment narratives."""
@@ -27,12 +106,17 @@ class NarrativeSynthesizer:
         self,
         api_key: str | None = None,
         daily_budget: float = 1.0,
-        model: str = "mistralai/mistral-7b-instruct:free",
+        model: str | None = None,  # If None, will auto-select an available free model
         timeout: float = 8.0,
+        preferred_models: Optional[List[str]] = None,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        self.model = model
+        self._preferred_models = preferred_models or PREFERRED_FREE_MODELS
         self.timeout = timeout
+
+        # Model selection is lazy/dynamic to handle availability
+        self._model: Optional[str] = model
+        self._last_model_selection: Optional[datetime] = None
 
         try:
             self.budget_cap = float(os.getenv("OPENROUTER_DAILY_BUDGET", str(daily_budget)))
@@ -42,10 +126,27 @@ class NarrativeSynthesizer:
         self._daily_spend = 0.0
         self._current_date: date = now().date()
 
-        # Hardcoded cost estimates to avoid complex calculations
-        # mistralai/mistral-7b-instruct:free -> 0.0
-        # For standard non-free models (e.g. Claude Haiku), estimate $0.0005 per call.
-        self._cost_per_call = 0.0 if ":free" in self.model else 0.0005
+        # Will be set when first used
+        self._cost_per_call: float = 0.0
+
+    @property
+    async def model(self) -> str:
+        """Return a currently available free model (auto-selects if needed)."""
+        now_dt = now()
+        if (
+            self._model is None
+            or self._last_model_selection is None
+            or (now_dt - self._last_model_selection) > timedelta(minutes=10)
+        ):
+            self._model = await select_available_free_model(
+                preferred=self._preferred_models,
+                api_key=self.api_key,
+            )
+            self._last_model_selection = now_dt
+            self._cost_per_call = 0.0 if ":free" in self._model else 0.0005
+            _log.info("openrouter_model_selected", model=self._model)
+
+        return self._model
 
     def _update_and_check_budget(self) -> bool:
         """Reset budget daily and check if budget has been exceeded."""
@@ -95,6 +196,8 @@ class NarrativeSynthesizer:
         if not self._update_and_check_budget():
             return fallback
 
+        current_model = await self.model  # dynamic selection of available free model
+
         prompt = (
             f"You are a professional Forex research analyst. Synthesize a concise market narrative "
             f"(under 60 words) for a trader monitoring {instrument.value}. "
@@ -114,7 +217,7 @@ class NarrativeSynthesizer:
                     "X-Title": "AITrader System",
                 }
                 payload = {
-                    "model": self.model,
+                    "model": current_model,
                     "messages": [
                         {"role": "system", "content": "You provide short, professional financial insights."},
                         {"role": "user", "content": prompt},
@@ -123,7 +226,7 @@ class NarrativeSynthesizer:
                     "max_tokens": 100,
                 }
 
-                _log.debug("synthesizer_api_request", instrument=instrument.value, model=self.model)
+                _log.debug("synthesizer_api_request", instrument=instrument.value, model=current_model)
                 response = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
@@ -134,13 +237,16 @@ class NarrativeSynthesizer:
                     data = response.json()
                     content = data["choices"][0]["message"]["content"].strip()
                     self._daily_spend += self._cost_per_call
-                    _log.debug("synthesizer_api_success", spend=self._daily_spend)
+                    _log.debug("synthesizer_api_success", spend=self._daily_spend, model=current_model)
                     return content
                 else:
+                    if response.status_code in (400, 404):  # model likely unavailable
+                        self._last_model_selection = None  # force reselect next time
                     _log.warning(
                         "synthesizer_api_error_code",
                         status_code=response.status_code,
                         response=response.text[:200],
+                        model=current_model,
                     )
                     return fallback
 

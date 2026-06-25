@@ -208,6 +208,32 @@ class ExecutionConfig(BaseModel):
     rate_limit_per_min: int = Field(ge=1, le=120, default=30)
 
 
+class FundamentalConfig(BaseModel):
+    """D03: fundamental analysis settings (sentiment, polling, aggregation)."""
+
+    sentiment_backend: str = Field(
+        default="mock",
+        description="finbert | mock | openrouter. 'mock' recommended for low-RAM CPU dev machines.",
+        pattern="^(finbert|mock|openrouter)$",
+    )
+    poll_interval_seconds: int = Field(
+        default=600, ge=60, le=3600,
+        description="How often the FundamentalAgent polls for new news articles"
+    )
+    aggregation_window_minutes: int = Field(
+        default=15, ge=1, le=120,
+        description="Time window to aggregate multiple articles into one FundamentalSignal"
+    )
+    min_confidence_to_emit: float = Field(
+        default=0.25, ge=0.0, le=1.0,
+        description="Minimum confidence before publishing a FundamentalSignal"
+    )
+    enable_structured_llm: bool = Field(
+        default=True,
+        description="Use structured output from OpenRouter for sentiment when backend=openrouter"
+    )
+
+
 # ── New D01 additions ─────────────────────────────────────────────────────────
 
 class SignalDecayConfig(BaseModel):
@@ -266,12 +292,14 @@ class CoreConfig(BaseModel):
 class AppConfig(BaseModel):
     """Root config: env name and all nested sections."""
 
-    env:       str           = Field(default="dev", pattern="^(dev|staging|prod)$")
-    core:      CoreConfig    = Field(default_factory=CoreConfig)
-    data:      DataConfig    = Field(default_factory=DataConfig)
-    model:     ModelConfig   = Field(default_factory=ModelConfig)
-    risk:      RiskConfig    = Field(default_factory=RiskConfig)
-    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    env:         str           = Field(default="dev", pattern="^(dev|staging|prod)$")
+    core:        CoreConfig    = Field(default_factory=CoreConfig)
+    data:        DataConfig    = Field(default_factory=DataConfig)
+    model:       ModelConfig   = Field(default_factory=ModelConfig)
+    risk:        RiskConfig    = Field(default_factory=RiskConfig)
+    execution:   ExecutionConfig = Field(default_factory=ExecutionConfig)
+    fundamental: FundamentalConfig = Field(default_factory=FundamentalConfig)
+    notifier:    dict          = Field(default_factory=dict)  # telegram etc.
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "AppConfig":
