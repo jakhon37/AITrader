@@ -107,7 +107,10 @@ export async function putInstrumentConfig(instrument: string, config: object) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
   });
-  if (!res.ok) throw new Error('Failed to save config');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || 'Failed to save config');
+  }
   return res.json();
 }
 

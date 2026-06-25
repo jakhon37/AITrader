@@ -28,6 +28,7 @@ from src.core.logging import get_logger
 from src.decision.expiry import is_valid
 from src.decision.fusion import combine
 from src.decision.narrator import build_narrative
+from src.decision.registry import resolve_active_model_version
 from src.decision.sizer import compute_suggested_size
 from src.decision.state import SignalState
 
@@ -179,7 +180,8 @@ class DecisionEngine:
                     timestamp=current_time,
                 )
             else:
-                # For dev/demo: still publish neutral so UI feed and fusion panel update on every bar
+                if self.state.last_published_direction.get(instrument) == Direction.NEUTRAL:
+                    return
                 self.state.prior_was_directional[instrument] = False
                 await self._publish_trade_signal(
                     instrument=instrument,
@@ -256,6 +258,11 @@ class DecisionEngine:
         timestamp: datetime,
     ) -> None:
         """Instantiate and publish a TradeSignal on the bus."""
+        model_type = getattr(getattr(self.config, "models", None), "model_type", None)
+        model_version = (
+            resolve_active_model_version(str(model_type)) if model_type else None
+        )
+
         trade_signal = TradeSignal(
             signal_id=new_signal_id(),
             instrument=instrument,
@@ -273,9 +280,10 @@ class DecisionEngine:
             suggested_size=suggested_size,
             narrative=narrative,
             sources=SignalSource(fundamental=f_sig, technical=t_sig),
-            model_version=None,
+            model_version=model_version,
         )
 
+        self.state.last_published_direction[instrument] = direction
         await self.bus.publish(BusChannel.TRADE_SIGNAL, trade_signal)
         _log.info(
             "trade_signal_published",

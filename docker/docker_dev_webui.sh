@@ -70,7 +70,7 @@ docker run -d --rm \
     -p "${BACKEND_PORT}:8000" \
     $ENV_FILE_ARG \
     -v "$PROJECT_DIR/src:/app/src:ro" \
-    -v "$PROJECT_DIR/config:/app/config:ro" \
+    -v "$PROJECT_DIR/config:/app/config:rw" \
     -v "$PROJECT_DIR/data:/app/data:rw" \
     -v "$PROJECT_DIR/models:/app/models:ro" \
     -v "$PROJECT_DIR/logs:/app/logs:rw" \

@@ -9,12 +9,27 @@ interface FusionPanelProps {
 
 export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: FusionPanelProps) {
   const tradeSignals = useSignalsStore((s) => s.tradeSignals);
+  const fundamentalSignals = useSignalsStore((s) => s.fundamentalSignals);
   const technicalSignal = useSignalsStore((s) => s.technicalByInstrument[instrument.toUpperCase()]);
-  const latest =
-    tradeSignals.find((s) => String(s.instrument).toUpperCase() === instrument.toUpperCase())
-    ?? tradeSignals[0];
 
-  const dirColor = (dir: string) => (dir === 'long' ? 'var(--neon-green)' : dir === 'short' ? 'var(--neon-red)' : 'var(--text-muted)');
+  const instKey = instrument.toUpperCase();
+  const latest =
+    tradeSignals.find((s) => String(s.instrument).toUpperCase() === instKey) ?? tradeSignals[0];
+  const fundamental =
+    fundamentalSignals.find((s) => String(s.instrument).toUpperCase() === instKey)
+    ?? fundamentalSignals.find((s) => !s.source_headline?.startsWith('Upcoming:'));
+
+  const dirColor = (dir: string) =>
+    dir === 'long' ? 'var(--neon-green)' : dir === 'short' ? 'var(--neon-red)' : 'var(--text-muted)';
+
+  const fundLabel = (score: number, direction?: string) => {
+    if (direction === 'neutral' || (score > -0.15 && score < 0.15)) return 'WATCH';
+    if (score >= 0.15) return 'BULLISH';
+    return 'BEARISH';
+  };
+
+  const fWeight = (latest as { fundamental_weight?: number })?.fundamental_weight;
+  const tWeight = (latest as { technical_weight?: number })?.technical_weight;
 
   return (
     <div
@@ -47,11 +62,24 @@ export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: Fusio
       {!isCollapsed && (
         <div className="panel-body panel-body-stack" style={{ gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Fundamental</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: fundamental ? dirColor(fundamental.direction) : 'var(--text-muted)' }}>
+              {fundamental ? fundLabel(fundamental.sentiment_score, fundamental.direction) : 'Awaiting...'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Technical Bias</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: technicalSignal ? dirColor(technicalSignal.direction) : 'var(--text-muted)' }}>
               {technicalSignal ? technicalSignal.direction.toUpperCase() : 'Awaiting...'}
             </span>
           </div>
+
+          {(fWeight != null || tWeight != null) && (
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>
+              Weights F {Math.round((fWeight ?? 0) * 100)}% · T {Math.round((tWeight ?? 0) * 100)}%
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px 16px', borderRadius: 10, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)', gap: 6, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>

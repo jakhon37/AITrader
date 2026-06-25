@@ -28,12 +28,15 @@ export interface TradeSignal {
   direction: string;
   confidence: number;
   strength: string;
+  fundamental_weight?: number;
+  technical_weight?: number;
   suggested_side: string | null;
   suggested_entry: number | null;
   suggested_sl: number | null;
   suggested_tp: number | null;
   suggested_size: number | null;
   narrative: string | null;
+  model_version?: string | null;
 }
 
 export interface FundamentalSignal {

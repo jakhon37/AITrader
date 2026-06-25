@@ -48,6 +48,16 @@ def client():
         yield test_client
 
 
+def test_pipeline_health_endpoint(client):
+    """Test GET /api/health/pipeline returns live component status."""
+    response = client.get("/api/health/pipeline")
+    assert response.status_code == 200
+    data = response.json()
+    assert "components" in data
+    assert "scheduler" in data["components"]
+    assert "decision_engine" in data["components"]
+
+
 def test_health_endpoint(client):
     """Test GET /api/health returns ok status."""
     response = client.get("/api/health")

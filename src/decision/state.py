@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from src.core.contracts import FundamentalSignal, Instrument, TechnicalSignal, TradeSignal
+from src.core.contracts import Direction, FundamentalSignal, Instrument, TechnicalSignal
 
 
 class SignalState:
@@ -24,3 +24,6 @@ class SignalState:
         # Used to identify when we transition from a active trade stance to a neutral stance,
         # which requires publishing a neutral cancellation signal.
         self.prior_was_directional: Dict[Instrument, bool] = {}
+
+        # Last published trade direction per instrument (dedupe repeated neutral updates)
+        self.last_published_direction: Dict[Instrument, Direction] = {}

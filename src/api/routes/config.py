@@ -81,8 +81,18 @@ async def update_instrument_config(
     try:
         with open(path, "w") as f:
             yaml.safe_dump(config_data, f, default_flow_style=False)
+    except OSError as e:
+        if e.errno == 30:  # EROFS — config volume mounted read-only in Docker
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Config directory is read-only. Remount config as rw in Docker "
+                    "(docker_dev_webui.sh uses :rw) and restart the backend."
+                ),
+            ) from e
+        raise HTTPException(status_code=500, detail=f"Failed to write configuration: {e}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write configuration: {e}") from e
 
     reload_instrument_configs()
     return {"status": "success", "config": config_data[inst_key]}

@@ -1,91 +1,95 @@
-# AITrader — Per-instrument trading configuration (single source of truth)
-# All divisions load via src.core.config.load_instruments()
-# enabled: drives D02 scheduler, auto-refresh, chart UI (GET /api/data/instruments)
-# See DEV_PLAN/CONTRACTS.md for the full field reference.
-#
-# session_hours: UTC Sun open / Fri close (22:00 → 22:00 covers entire FX week)
-# news_halt_minutes: minutes before AND after a high-impact event where no new orders are placed
-# signal_decay: hours until a FundamentalSignal from each event type expires (D05 discards after)
-
 EURUSD:
+  active_timeframes:
+  - 15m
+  - 1h
+  - 4h
+  - 1d
   enabled: true
-  pip_size: 0.0001
-  lot_size: 100000
-  session_hours:
-    open: "22:00"
-    close: "22:00"
-  active_timeframes: ["15m", "1h", "4h", "1d"]
-  primary_timeframe: "1h"
-  fundamental_weight: 0.3
-  technical_weight: 0.7
-  max_position_lots: 1.0
-  news_halt_minutes: 30
-  signal_decay:
-    central_bank: 48
-    economic_data: 4
-    geopolitical: 6
-    market_risk: 2
-    technical_conf: 1
-
-GBPUSD:
-  enabled: true
-  pip_size: 0.0001
-  lot_size: 100000
-  session_hours:
-    open: "22:00"
-    close: "22:00"
-  active_timeframes: ["15m", "1h", "4h", "1d"]
-  primary_timeframe: "1h"
   fundamental_weight: 0.35
-  technical_weight: 0.65
-  max_position_lots: 1.0
-  news_halt_minutes: 30
-  signal_decay:
-    central_bank: 48
-    economic_data: 4
-    geopolitical: 6
-    market_risk: 2
-    technical_conf: 1
-
-USDJPY:
-  enabled: true
-  pip_size: 0.01
   lot_size: 100000
-  session_hours:
-    open: "22:00"
-    close: "22:00"
-  active_timeframes: ["15m", "1h", "4h", "1d"]
-  primary_timeframe: "1h"
-  fundamental_weight: 0.4
-  technical_weight: 0.6
   max_position_lots: 1.0
   news_halt_minutes: 30
+  pip_size: 0.0001
+  primary_timeframe: 1h
+  session_hours:
+    close: '22:00'
+    open: '22:00'
   signal_decay:
     central_bank: 48
     economic_data: 4
     geopolitical: 6
     market_risk: 2
     technical_conf: 1
-
-XAUUSD:
+  technical_weight: 0.65
+GBPUSD:
+  active_timeframes:
+  - 15m
+  - 1h
+  - 4h
+  - 1d
   enabled: true
-  pip_size: 0.01
-  lot_size: 100          # 1 lot = 100 oz
+  fundamental_weight: 0.35
+  lot_size: 100000
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  pip_size: 0.0001
+  primary_timeframe: 1h
   session_hours:
-    open: "22:00"        # UTC Sun open / daily reopen after maintenance
-    close: "21:00"       # UTC daily close (Dukascopy gold)
-  daily_break:
-    start: "21:00"       # UTC 1h maintenance pause before reopen at 22:00
-    end: "22:00"
-  active_timeframes: ["15m", "1h", "4h", "1d"]
-  primary_timeframe: "1h"
-  fundamental_weight: 0.5   # Gold is more macro-driven than FX pairs
-  technical_weight: 0.5
-  max_position_lots: 0.5    # smaller due to larger lot value
-  news_halt_minutes: 45     # Gold is more volatile around CPI/NFP
+    close: '22:00'
+    open: '22:00'
   signal_decay:
-    central_bank: 72        # rate decisions move Gold for longer
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+  technical_weight: 0.65
+USDJPY:
+  active_timeframes:
+  - 15m
+  - 1h
+  - 4h
+  - 1d
+  enabled: true
+  fundamental_weight: 0.4
+  lot_size: 100000
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  pip_size: 0.01
+  primary_timeframe: 1h
+  session_hours:
+    close: '22:00'
+    open: '22:00'
+  signal_decay:
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+  technical_weight: 0.6
+XAUUSD:
+  active_timeframes:
+  - 15m
+  - 1h
+  - 4h
+  - 1d
+  daily_break:
+    end: '22:00'
+    start: '21:00'
+  enabled: true
+  fundamental_weight: 0.5
+  lot_size: 100
+  max_position_lots: 0.5
+  news_halt_minutes: 45
+  pip_size: 0.01
+  primary_timeframe: 1h
+  session_hours:
+    close: '21:00'
+    open: '22:00'
+  signal_decay:
+    central_bank: 72
     economic_data: 6
-    geopolitical: 12        # geopolitical premium lingers in Gold
+    geopolitical: 12
     market_risk: 4
     technical_conf: 1
+  technical_weight: 0.5

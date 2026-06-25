@@ -25,7 +25,13 @@ export function ConfigEditor({ instrument, isCollapsed, onToggleCollapse }: Conf
     setMsg('Saving...');
     putInstrumentConfig(instrument, config)
       .then(() => { setMsg('Saved!'); setTimeout(() => setMsg(''), 3000); })
-      .catch(() => setMsg('Failed.'));
+      .catch(async (err: unknown) => {
+        let detail = 'Failed.';
+        if (err instanceof Error && err.message) {
+          detail = err.message;
+        }
+        setMsg(detail);
+      });
   };
 
   const inputStyle: React.CSSProperties = { background: '#0e1420', color: 'white', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, padding: '3px 6px', width: 60, textAlign: 'center' };
