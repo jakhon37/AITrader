@@ -11,7 +11,7 @@ import { NewsFeed } from '../Panels/NewsFeed';
 import { Portfolio } from '../Panels/Portfolio';
 import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
-import { getDataInstruments, releaseReplaySession } from '../../api/client';
+import { focusChartPair, getDataInstruments, releaseReplaySession } from '../../api/client';
 import { useLiveChartStatus } from '../../hooks/useLiveChartStatus';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { LiveChartStatus } from './LiveChartStatus';
@@ -40,6 +40,12 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
       /* non-fatal: terminal still works if release fails */
     });
   }, []);
+
+  useEffect(() => {
+    focusChartPair(instrument, timeframe).catch(() => {
+      /* chart still loads from store if focus call fails */
+    });
+  }, [instrument, timeframe]);
 
   useEffect(() => {
     getDataInstruments()

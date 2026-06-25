@@ -22,7 +22,17 @@ function formatSource(source: string | null): string {
 }
 
 export function LiveChartStatus({ status, wsConnected, displayTimezone }: Props) {
-  const { lastUpdate, source, close, serverError, replayBlocked, stale, barStale } = status;
+  const {
+    lastUpdate,
+    source,
+    close,
+    serverError,
+    replayBlocked,
+    dataFresh,
+    pollFresh,
+    warmingUp,
+    feedOffline,
+  } = status;
 
   let label = 'Live';
   let color = 'var(--neon-green, #00e676)';
@@ -36,16 +46,24 @@ export function LiveChartStatus({ status, wsConnected, displayTimezone }: Props)
   } else if (serverError) {
     label = 'Feed error';
     color = '#ff5252';
-  } else if (stale && barStale) {
-    label = 'Feed offline';
-    color = '#ff5252';
-  } else if (stale) {
+  } else if (warmingUp) {
     label = 'Polling…';
     color = '#ffb74d';
-  } else if (barStale) {
+  } else if (dataFresh) {
+    label = 'Live';
+    color = 'var(--neon-green, #00e676)';
+  } else if (feedOffline) {
+    label = 'Feed offline';
+    color = '#ff5252';
+  } else if (pollFresh) {
     label = 'No new bar';
     color = '#ffb74d';
+  } else {
+    label = 'Polling…';
+    color = '#ffb74d';
   }
+
+  const indicatorOnline = dataFresh || warmingUp || pollFresh;
 
   return (
     <div
@@ -60,7 +78,7 @@ export function LiveChartStatus({ status, wsConnected, displayTimezone }: Props)
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span
-          className={`glow-indicator ${stale || !wsConnected || barStale ? 'offline' : 'online'}`}
+          className={`glow-indicator ${indicatorOnline && wsConnected ? 'online' : 'offline'}`}
           style={{ width: 6, height: 6 }}
         />
         <span style={{ color, fontWeight: 600 }}>{label}</span>

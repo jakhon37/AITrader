@@ -13,6 +13,7 @@ from typing import Optional
 import pandas as pd
 import requests
 
+from src.core.candle import candle_open_time
 from src.core.contracts import Instrument, OHLCVBar, Timeframe
 from src.core.exceptions import DataError
 from src.core.ids import new_signal_id
@@ -47,28 +48,8 @@ _TF_RESAMPLE: dict[Timeframe, str] = {
     Timeframe.W1: "1wk",
 }
 
-_TF_DURATION: dict[Timeframe, timedelta] = {
-    Timeframe.M1: timedelta(minutes=1),
-    Timeframe.M5: timedelta(minutes=5),
-    Timeframe.M15: timedelta(minutes=15),
-    Timeframe.M30: timedelta(minutes=30),
-    Timeframe.H1: timedelta(hours=1),
-    Timeframe.H4: timedelta(hours=4),
-    Timeframe.D1: timedelta(days=1),
-    Timeframe.W1: timedelta(weeks=1),
-}
-
 _RECORD_FMT = ">5If"
 _RECORD_SIZE = struct.calcsize(_RECORD_FMT)
-
-
-def _candle_open_time(dt: datetime, timeframe: Timeframe) -> datetime:
-    dur = _TF_DURATION[timeframe]
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    elapsed = (dt - epoch).total_seconds()
-    dur_secs = dur.total_seconds()
-    candle_epoch_secs = (elapsed // dur_secs) * dur_secs
-    return epoch + timedelta(seconds=candle_epoch_secs)
 
 
 def _resample_m1(df: pd.DataFrame, timeframe: Timeframe) -> pd.DataFrame:
@@ -102,7 +83,7 @@ def bars_from_m1_df(
         raise DataError(f"No M1 rows to derive {timeframe.value} for {instrument.value}")
 
     now = now or datetime.now(timezone.utc)
-    candle_open = _candle_open_time(now, timeframe)
+    candle_open = candle_open_time(now, timeframe)
     df = m1_df if timeframe == Timeframe.M1 else _resample_m1(m1_df, timeframe)
     if df.empty:
         raise DataError(f"Resample to {timeframe.value} produced no bars for {instrument.value}")
@@ -313,10 +294,15 @@ class DukascopyFeed(OHLCVFeed):
                 time.sleep(self._pacing_sec + random.uniform(0.0, 0.2))
             current += timedelta(days=1)
 
-        if self._tick_enabled and end_date >= today:
-            today_m1 = self._fetch_today_m1_from_ticks(symbol)
-            if not today_m1.empty:
-                chunks.append(today_m1)
+        if end_date >= today:
+            # Daily minute candles update through the session; tick hours can 404.
+            today_daily = self._download_day(symbol, today.year, today.month, today.day)
+            if today_daily is not None and not today_daily.empty:
+                chunks.append(today_daily)
+            if self._tick_enabled:
+                today_m1 = self._fetch_today_m1_from_ticks(symbol)
+                if not today_m1.empty:
+                    chunks.append(today_m1)
 
         if not chunks:
             return pd.DataFrame()
@@ -366,6 +352,7 @@ class DukascopyFeed(OHLCVFeed):
         instrument: Instrument,
         *,
         max_cache_age_sec: Optional[float] = None,
+        lookback_hours: Optional[float] = None,
     ) -> pd.DataFrame:
         """Fetch (or return cached) recent M1 window for live polling."""
         ttl = self._live_m1_cache_ttl_sec if max_cache_age_sec is None else max_cache_age_sec
@@ -380,7 +367,10 @@ class DukascopyFeed(OHLCVFeed):
             return cached.df
 
         now = datetime.now(timezone.utc)
-        lookback = timedelta(days=self._live_m1_lookback_days)
+        if lookback_hours is not None:
+            lookback = timedelta(hours=lookback_hours)
+        else:
+            lookback = timedelta(days=self._live_m1_lookback_days)
         symbol = self._symbol(instrument)
         with DUKASCOPY_LOCK:
             df = self._fetch_m1_hybrid(symbol, now - lookback, now)

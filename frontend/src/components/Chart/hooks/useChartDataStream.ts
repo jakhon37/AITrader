@@ -9,6 +9,7 @@ import {
   isTradingBar,
   type ChartViewportMode,
 } from '../utils';
+import { emitChartBarsUpdated } from '../../../utils/chartStatusEvents';
 import { useChartScrolling } from './useChartScrolling';
 import { useChartWebSocket } from './useChartWebSocket';
 
@@ -128,6 +129,8 @@ export function useChartDataStream(
     if (followLive && c && !isReplayMode()) {
       applyChartViewport(c, sanitized, timeframe, { mode: viewportMode });
     }
+
+    emitChartBarsUpdated(instrument, timeframe, sanitized);
   }, [timeframe, viewportMode, instrument]);
 
   const refetchRecentGap = useCallback(async (fromUnixSec: number, followLive = false) => {
@@ -342,6 +345,10 @@ export function useChartDataStream(
 
     if (!virtualEndTimeRef.current && touchesLastBar && shouldFollowLive() && chartRef.current) {
       applyChartViewport(chartRef.current, dataRef.current, timeframe, { mode: viewportMode });
+    }
+
+    if (dataRef.current.length > 0) {
+      emitChartBarsUpdated(instrument, timeframe, dataRef.current);
     }
   }, [instrument, timeframe, viewportMode, refetchRecentGap, shouldFollowLive]);
 

@@ -22,6 +22,11 @@ Do **not** maintain a second instrument list in `dev.yaml` — env YAML holds pi
 Session hours and gold `daily_break` in instruments.yaml drive chart bar filtering via
 `src/core/session.py` (loaded through `load_instruments()`).
 
+### Live poll vs refresh (Tier 1 stabilization)
+- `set_focused_pair()` keeps bootstrap H1 pairs plus one chart pair; prunes stale TF switches.
+- `DataRefreshWorker` defers tail refresh while an intraday chart is focused or during
+  the 90s post-startup grace window (yields `DUKASCOPY_LOCK` to live M1 polls).
+
 ---
 
 ## Emits
@@ -42,7 +47,14 @@ Exposes direct query API for historical reads:
 ```
 src/data/
   __init__.py
-  scheduler.py      <- candle-close timer; fires OHLCVBar per TF close
+  scheduler/        <- DataScheduler package (live poll + replay tick)
+    core.py         <- orchestrator + control API
+    live.py         <- Dukascopy live loop
+    replay.py       <- virtual-clock replay tick
+    fetcher.py      <- OHLCVFetcher wrapper
+    store_ops.py    <- Parquet read/write for bars
+    bars.py         <- wick normalization
+    types.py        <- constants + PairLiveStatus
   store.py          <- DataStore; unified query over Parquet + SQLite news/calendar
   loaders/
     csv_loader.py   <- existing; refactor to emit OHLCVBar
@@ -56,10 +68,14 @@ src/data/
   validation.py     <- OHLCV schema checks (no NaN, monotonic timestamps, OHLC consistency)
 ```
 
-### scheduler.py
-Async loop. For each active (instrument, timeframe) pair, calculates next candle close.
-Live mode: wall-clock sleep until close. Replay mode: checks clock.now() on each tick,
-emits when virtual time crosses candle boundary. No wall-clock sleep in replay.
+### scheduler/ package
+`DataScheduler` composes `LiveSchedulerMixin` (Dukascopy poll loop) and
+`ReplaySchedulerMixin` (virtual-clock tick). Shared candle boundaries live in
+`src/core/candle.py` (used by poll schedule, feeds, and store ops).
+
+Live mode: adaptive poll intervals per pair; focused chart pair polls faster.
+Replay mode: checks `clock.now()` on each tick, emits when virtual time crosses
+candle boundary. No wall-clock sleep in replay.
 
 ### store.py
 Storage backends:

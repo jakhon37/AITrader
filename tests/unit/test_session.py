@@ -75,6 +75,15 @@ def test_chart_bar_keeps_active_session_bar() -> None:
     )
 
 
+def test_chart_bar_keeps_quiet_m1_bar_with_tiny_wick() -> None:
+    """Low-volume M1 bars must not be stripped — that caused 1h chart holes on gold."""
+    ts = _utc(2026, 6, 17, 15, 30)
+    assert (
+        is_chart_bar(ts, Instrument.XAUUSD, 2345.0, 2345.01, 2345.0, 2345.0, 0.0)
+        is True
+    )
+
+
 def test_chart_bar_gold_daily_break_rejected() -> None:
     ts = _utc(2026, 6, 17, 21, 0)
     assert (

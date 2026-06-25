@@ -60,16 +60,10 @@ export function isInstrumentSessionBar(unixSec: number, instrument?: string): bo
   return isFxSessionBar(unixSec);
 }
 
-/** Stale flat bars left by feeds during market pauses (weekends, daily gold break). */
+/** Stale placeholder bars with no wick (weekend/break carry-forward). */
 export function isInactiveFlatBar(
   bar: { open: number; high: number; low: number; close: number; volume?: number },
-  instrument?: string,
+  _instrument?: string,
 ): boolean {
-  const vol = bar.volume ?? 0;
-  const range = bar.high - bar.low;
-  const pip = PIP_SIZE[instrument?.toUpperCase() ?? ''] ?? 0.0001;
-  if (range <= 0) return true;
-  if (vol <= 0 && range <= pip * 2) return true;
-  if (bar.open === bar.close && range <= pip) return true;
-  return false;
+  return bar.high - bar.low <= 0;
 }

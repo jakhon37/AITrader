@@ -101,16 +101,9 @@ def is_inactive_flat_bar(
     close: float,
     volume: float,
 ) -> bool:
-    """Stale zero-/low-activity bars left by feeds during pauses."""
-    bar_range = high - low
-    pip = pip_size_for(instrument)
-    if bar_range <= 0:
-        return True
-    if volume <= 0 and bar_range <= pip * 2:
-        return True
-    if open_ == close and bar_range <= pip:
-        return True
-    return False
+    """Stale placeholder bars with no wick (weekend/break carry-forward)."""
+    _ = (instrument, open_, close, volume)
+    return high - low <= 0
 
 
 def is_chart_bar(

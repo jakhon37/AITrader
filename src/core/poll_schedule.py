@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
+from src.core.candle import TF_DURATION, next_candle_close
 from src.core.contracts import Timeframe
-
-_TF_DURATION: dict[Timeframe, timedelta] = {
-    Timeframe.M1: timedelta(minutes=1),
-    Timeframe.M5: timedelta(minutes=5),
-    Timeframe.M15: timedelta(minutes=15),
-    Timeframe.M30: timedelta(minutes=30),
-    Timeframe.H1: timedelta(hours=1),
-    Timeframe.H4: timedelta(hours=4),
-    Timeframe.D1: timedelta(days=1),
-    Timeframe.W1: timedelta(weeks=1),
-}
 
 # (steady_min_sec, steady_max_sec) when not in the forming window
 _STEADY_BOUNDS: dict[Timeframe, tuple[float, float]] = {
@@ -34,23 +24,10 @@ _MIN_FORMING_SEC = 45.0
 _MAX_FORMING_SEC = 180.0
 
 
-def _candle_open_time(dt: datetime, timeframe: Timeframe) -> datetime:
-    dur = _TF_DURATION[timeframe]
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    elapsed = (dt.astimezone(timezone.utc) - epoch).total_seconds()
-    dur_secs = dur.total_seconds()
-    candle_epoch_secs = (elapsed // dur_secs) * dur_secs
-    return epoch + timedelta(seconds=candle_epoch_secs)
-
-
-def _next_candle_close(dt: datetime, timeframe: Timeframe) -> datetime:
-    return _candle_open_time(dt, timeframe) + _TF_DURATION[timeframe]
-
-
 def seconds_until_candle_close(now: datetime, timeframe: Timeframe) -> float:
     """Seconds until the active candle closes (UTC)."""
     now = now.astimezone(timezone.utc)
-    return max(0.0, (_next_candle_close(now, timeframe) - now).total_seconds())
+    return max(0.0, (next_candle_close(now, timeframe) - now).total_seconds())
 
 
 def compute_live_poll_interval(
@@ -60,12 +37,9 @@ def compute_live_poll_interval(
     focused: bool = True,
     background_multiplier: float = 2.0,
 ) -> float:
-    """Return seconds until this pair should be polled again.
-
-    Polls faster near candle close (forming bar), slower mid-candle.
-    """
+    """Return seconds until this pair should be polled again."""
     now = now.astimezone(timezone.utc)
-    dur = _TF_DURATION[timeframe].total_seconds()
+    dur = TF_DURATION[timeframe].total_seconds()
     secs_to_close = seconds_until_candle_close(now, timeframe)
 
     forming_window = max(

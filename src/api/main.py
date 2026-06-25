@@ -116,7 +116,10 @@ async def lifespan(app: FastAPI):
 
     # 7. Automatic Dukascopy tail refresh (startup + hourly)
     refresh_worker = DataRefreshWorker(
-        store=data_store, cfg=app_config, feed=dukascopy_feed
+        store=data_store,
+        cfg=app_config,
+        feed=dukascopy_feed,
+        scheduler=scheduler,
     )
     app.state.refresh_worker = refresh_worker
     await refresh_worker.start()

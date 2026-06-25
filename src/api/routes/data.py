@@ -37,6 +37,8 @@ _INTRADAY_TIMEFRAMES = {
     Timeframe.M30,
 }
 
+_gap_fill_inflight: set[str] = set()
+
 
 async def fill_data_gaps(
     data_store: Any,
@@ -165,6 +167,58 @@ def parse_datetime(dt_str: str) -> datetime:
         ) from e
 
 
+def _schedule_focus_poll(
+    scheduler: Any,
+    inst: Instrument,
+    tf: Timeframe,
+) -> bool:
+    """Register chart focus and kick one light live poll. Returns True if focus changed."""
+    if scheduler.set_focused_pair(inst, tf):
+
+        async def _kick_focus_poll() -> None:
+            try:
+                await scheduler.poll_pair_now(inst, tf, light=True)
+            except Exception as exc:
+                logger.warning(
+                    "focus_poll_failed instrument=%s tf=%s error=%s",
+                    inst.value,
+                    tf.value,
+                    exc,
+                )
+
+        asyncio.create_task(_kick_focus_poll())
+        return True
+    return False
+
+
+@router.post("/focus")
+async def focus_chart_pair(
+    request: Request,
+    instrument: str = Query(..., description="EURUSD, GBPUSD, etc."),
+    timeframe: str = Query(..., description="1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w"),
+) -> Dict[str, Any]:
+    """Tell the scheduler which pair the chart is viewing (one call per instrument/TF change)."""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not initialized.")
+    replay_active = getattr(request.app.state, "active_replay_session", None) is not None
+    if replay_active:
+        return {"status": "skipped", "reason": "replay_active"}
+
+    try:
+        inst = Instrument(instrument.upper())
+        tf = Timeframe(timeframe)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    changed = _schedule_focus_poll(scheduler, inst, tf)
+    return {
+        "status": "ok",
+        "focused": f"{inst.value}/{tf.value}",
+        "changed": changed,
+    }
+
+
 @router.get("/ohlcv")
 async def get_ohlcv(
     request: Request,
@@ -172,6 +226,10 @@ async def get_ohlcv(
     timeframe: str = Query(..., description="1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w"),
     start: str = Query(..., description="ISO 8601 start timestamp"),
     end: str = Query(..., description="ISO 8601 end timestamp"),
+    focus: bool = Query(
+        False,
+        description="When true, also register scheduler focus (prefer POST /data/focus)",
+    ),
 ) -> List[Dict[str, Any]]:
     """Retrieve historical OHLCV data from the Parquet store, formatted for Lightweight Charts."""
     data_store = getattr(request.app.state, "data_store", None)
@@ -187,11 +245,11 @@ async def get_ohlcv(
     start_dt = parse_datetime(start)
     end_dt = parse_datetime(end)
 
-    # Focus scheduler first so intraday charts get live polls while gap-fill runs.
-    scheduler = getattr(request.app.state, "scheduler", None)
-    replay_active = getattr(request.app.state, "active_replay_session", None) is not None
-    if scheduler and not replay_active:
-        scheduler.set_focused_pair(inst, tf)
+    if focus:
+        scheduler = getattr(request.app.state, "scheduler", None)
+        replay_active = getattr(request.app.state, "active_replay_session", None) is not None
+        if scheduler and not replay_active:
+            _schedule_focus_poll(scheduler, inst, tf)
 
     app_config = getattr(request.app.state, "app_config", None)
     auto_refresh = (
@@ -202,13 +260,20 @@ async def get_ohlcv(
     if store_needs_gap_fill(data_store, inst, tf, end_dt, auto_refresh=auto_refresh):
         shared_feed = getattr(request.app.state, "dukascopy_feed", None)
 
+        gap_key = f"{inst.value}/{tf.value}"
+
         async def _run_gap_fill() -> None:
+            if gap_key in _gap_fill_inflight:
+                return
+            _gap_fill_inflight.add(gap_key)
             try:
                 await fill_data_gaps(
                     data_store, inst, tf, start_dt, end_dt, feed=shared_feed
                 )
             except Exception as exc:
                 logger.exception(f"Failed during fill_data_gaps check: {exc}")
+            finally:
+                _gap_fill_inflight.discard(gap_key)
 
         # Intraday + auto-refresh: never block the chart HTTP request on Dukascopy.
         if auto_refresh and tf in _INTRADAY_TIMEFRAMES:

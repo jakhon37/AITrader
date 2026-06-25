@@ -1,9 +1,24 @@
 const API_BASE = 'http://localhost:8000/api';
 
-export async function getOHLCV(instrument: string, timeframe: string, start: string, end: string) {
+export async function getOHLCV(
+  instrument: string,
+  timeframe: string,
+  start: string,
+  end: string,
+  options?: { focus?: boolean },
+) {
   const params = new URLSearchParams({ instrument, timeframe, start, end });
+  if (options?.focus) params.set('focus', 'true');
   const res = await fetch(`${API_BASE}/data/ohlcv?${params.toString()}`);
   if (!res.ok) throw new Error('Failed to fetch OHLCV');
+  return res.json();
+}
+
+/** Register scheduler focus once per instrument/timeframe change (not per chart page). */
+export async function focusChartPair(instrument: string, timeframe: string) {
+  const params = new URLSearchParams({ instrument, timeframe });
+  const res = await fetch(`${API_BASE}/data/focus?${params.toString()}`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to focus chart pair');
   return res.json();
 }
 

@@ -293,6 +293,39 @@ class TestControl:
         assert scheduler.focused_pair == (EURUSD, H1)
         assert scheduler.active_pairs == [(EURUSD, H1)]
 
+    def test_set_focused_pair_prunes_stale_chart_pairs(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        bootstrap = [(EURUSD, H1), (Instrument.GBPUSD, H1)]
+        scheduler = DataScheduler(
+            bus=mock_bus,
+            store=mock_store,
+            clock=LiveClock(),
+            fetcher=mock_fetcher,
+            active_pairs=list(bootstrap),
+        )
+        scheduler.add_active_pair(EURUSD, Timeframe.M5)
+        scheduler.add_active_pair(EURUSD, Timeframe.M30)
+        scheduler.set_focused_pair(EURUSD, Timeframe.M1)
+        assert scheduler.focused_pair == (EURUSD, Timeframe.M1)
+        assert (EURUSD, Timeframe.M5) not in scheduler.active_pairs
+        assert (EURUSD, Timeframe.M30) not in scheduler.active_pairs
+        assert (EURUSD, Timeframe.M1) in scheduler.active_pairs
+        assert (Instrument.GBPUSD, H1) in scheduler.active_pairs
+
+    def test_is_intraday_focused(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        scheduler = DataScheduler(
+            bus=mock_bus, store=mock_store, clock=LiveClock(),
+            fetcher=mock_fetcher, active_pairs=[(EURUSD, H1)],
+        )
+        assert scheduler.is_intraday_focused() is False
+        scheduler.set_focused_pair(EURUSD, Timeframe.M1)
+        assert scheduler.is_intraday_focused() is True
+        scheduler.set_focused_pair(EURUSD, H1)
+        assert scheduler.is_intraday_focused() is False
+
     def test_get_live_status_shape(
         self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
     ) -> None:
@@ -318,3 +351,38 @@ class TestControl:
         scheduler.stop()
         await task
         assert scheduler._running is False
+
+
+def test_sync_m1_window_fills_gap_after_last_stored() -> None:
+    from src.data.scheduler.store_ops import sync_m1_window_to_store
+
+    store = MagicMock()
+    last = datetime(2024, 6, 10, 14, 59, tzinfo=timezone.utc)
+    store.list_ohlcv_range.return_value = (last, last)
+
+    idx = pd.date_range(
+        datetime(2024, 6, 10, 15, 0, tzinfo=timezone.utc),
+        datetime(2024, 6, 10, 15, 5, tzinfo=timezone.utc),
+        freq="1min",
+        tz="UTC",
+    )
+    m1_df = pd.DataFrame(
+        {
+            "open": [1.1] * len(idx),
+            "high": [1.1001] * len(idx),
+            "low": [1.0999] * len(idx),
+            "close": [1.1] * len(idx),
+            "volume": [0.0] * len(idx),
+        },
+        index=idx,
+    )
+    now = datetime(2024, 6, 10, 15, 6, tzinfo=timezone.utc)
+
+    rows = sync_m1_window_to_store(store, EURUSD, m1_df, now)
+    assert rows == 6
+    store.write_ohlcv.assert_called_once()
+    written = store.write_ohlcv.call_args[0][2]
+    assert len(written) == 6
+    assert written.index[0].to_pydatetime() == datetime(
+        2024, 6, 10, 15, 0, tzinfo=timezone.utc
+    )

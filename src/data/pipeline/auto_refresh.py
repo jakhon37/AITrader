@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from src.core.config import AppConfig
+
+if TYPE_CHECKING:
+    from src.data.scheduler import DataScheduler
 from src.core.logging import get_logger
 from src.data.feeds.dukascopy import DukascopyFeed
 from src.data.pipeline.refresh import refresh_all_enabled, refresh_slow_resample_all
@@ -24,10 +27,16 @@ class DataRefreshWorker:
         store: DataStore,
         cfg: AppConfig,
         feed: Optional[DukascopyFeed] = None,
+        scheduler: Optional["DataScheduler"] = None,
+        *,
+        startup_grace_sec: float = 90.0,
     ) -> None:
         self._store = store
         self._cfg = cfg
         self._feed = feed or DukascopyFeed()
+        self._scheduler = scheduler
+        self._startup_grace_sec = startup_grace_sec
+        self._started_at_mono = time.monotonic()
         pipeline = cfg.data.pipeline
         self._fast_interval_sec = pipeline.tail_refresh_interval_sec
         self._slow_interval_sec = pipeline.tail_resample_slow_interval_sec
@@ -80,8 +89,24 @@ class DataRefreshWorker:
         slow_due = self._slow_interval_sec - (now - self._last_slow_mono)
         return max(30.0, min(fast_due, slow_due, 300.0))
 
+    def _should_defer_refresh(self) -> bool:
+        """Yield Dukascopy lock to live intraday polls after startup / chart focus."""
+        if self._scheduler is not None and self._scheduler.is_intraday_focused():
+            return True
+        if self._scheduler is not None:
+            elapsed = time.monotonic() - self._started_at_mono
+            if (
+                elapsed < self._startup_grace_sec
+                and self._scheduler.focused_pair is not None
+            ):
+                return True
+        return False
+
     async def _run_due_jobs(self) -> None:
         if self._refresh_in_progress:
+            return
+        if self._should_defer_refresh():
+            _log.debug("data_refresh_deferred_live_priority")
             return
         now_mono = time.monotonic()
         run_fast = (now_mono - self._last_fast_mono) >= self._fast_interval_sec

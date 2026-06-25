@@ -46,3 +46,39 @@ async def test_worker_disabled_when_auto_refresh_off() -> None:
     await worker.start()
     assert worker.get_status()["enabled"] is False
     assert worker.get_status()["running"] is False
+
+
+def test_worker_defers_when_intraday_focused() -> None:
+    store = MagicMock()
+    scheduler = MagicMock()
+    scheduler.is_intraday_focused.return_value = True
+    worker = DataRefreshWorker(store=store, cfg=_cfg(), scheduler=scheduler)
+    assert worker._should_defer_refresh() is True
+
+
+def test_worker_startup_grace_when_chart_focused() -> None:
+    store = MagicMock()
+    scheduler = MagicMock()
+    scheduler.is_intraday_focused.return_value = False
+    scheduler.focused_pair = (MagicMock(), MagicMock())
+    worker = DataRefreshWorker(
+        store=store,
+        cfg=_cfg(),
+        scheduler=scheduler,
+        startup_grace_sec=300.0,
+    )
+    assert worker._should_defer_refresh() is True
+
+
+def test_worker_runs_when_no_focus_after_grace() -> None:
+    store = MagicMock()
+    scheduler = MagicMock()
+    scheduler.is_intraday_focused.return_value = False
+    scheduler.focused_pair = None
+    worker = DataRefreshWorker(
+        store=store,
+        cfg=_cfg(),
+        scheduler=scheduler,
+        startup_grace_sec=0.0,
+    )
+    assert worker._should_defer_refresh() is False

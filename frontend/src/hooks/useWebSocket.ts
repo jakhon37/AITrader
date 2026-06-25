@@ -7,6 +7,14 @@ const WS_URL = 'ws://localhost:8000/ws';
 const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
+function parseBusField(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && 'value' in value) {
+    return String((value as { value: string }).value);
+  }
+  return String(value ?? '');
+}
+
 export function useWebSocket() {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -63,14 +71,8 @@ export function useWebSocket() {
                 close: barData.close,
                 volume: barData.volume,
               };
-              const instrument =
-                typeof barData.instrument === 'string'
-                  ? barData.instrument
-                  : String(barData.instrument ?? '');
-              const timeframe =
-                typeof barData.timeframe === 'string'
-                  ? barData.timeframe
-                  : String(barData.timeframe ?? '');
+              const instrument = parseBusField(barData.instrument);
+              const timeframe = parseBusField(barData.timeframe);
               window.dispatchEvent(
                 new CustomEvent('ohlcv_bar', {
                   detail: {

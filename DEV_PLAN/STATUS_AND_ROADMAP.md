@@ -1,105 +1,144 @@
 # AITrader Project Status & Roadmap
 
+*Last updated: 2026-06-25*
+
 ## Executive Summary
-AITrader is being refactored and built following a modular multi-division plan (`DEV_PLAN/MASTER.md`).
-- **Completed Phases**: Phase 0 (Contract Design), Phase 1 (D01-CORE + D02-DATA), Phase 2 (D04-TECHNICAL + D08-BACKTEST), and **Phase 5 (D10-WEBUI)** are fully completed and verified.
-- **Current Phase**: We are ready to start **Phase 3 (D03-FUNDAMENTAL + D07-NOTIFIER)**.
-- **Test Suite Status**: Ran the test suite via Docker (`./docker/docker_dev_test.sh`). **405 out of 405 tests passed (100% success)**.
-- **Bugs Fixed**: Resolved the vectorized `BacktestEngine` bug by ensuring open positions are force-closed on the last bar of a backtest run.
-- **Features Implemented**: Completed Phase 2b replay architecture, including `session_state.py`, `replay.py`, `scorer.py`, `reporter.py`, and `websocket.py`. Also completed D10-WEBUI with FastAPI backend + React/TypeScript/Vite frontend (replaces Streamlit dashboards).
+
+AITrader follows the modular division plan in `DEV_PLAN/MASTER.md`. Core infrastructure, backtest/replay, and the Web UI terminal are operational. The **live chart + Dukascopy data pipeline** is the current focus area (D02 stabilization). The **live signal pipeline** (Technical → Decision → Execution on the bus) is implemented as modules but **not yet wired** into the Web UI process.
+
+| Milestone | Status |
+|-----------|--------|
+| Phase 0 — Contracts | ✅ Done |
+| Phase 1 — D01 + D02 | ✅ Done (D02 polish in progress — see Tier 1 below) |
+| Phase 2 — D04 + D08 | ✅ Done |
+| Phase 3 — D03 + D07 | 🔶 Code exists; not live in WebUI |
+| Phase 4 — D05 + D06 | 🔶 Code + unit tests; not end-to-end in terminal |
+| Phase 5 — D10 Web UI | ✅ Charts/data/replay; signal panels await bus wiring |
+| Phase 6+ — D09 ML, D11 OPS, live broker | 🔴 Future |
 
 ---
 
 ## Status by Division
 
-| Division | Name | Role | Status | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **D01** | **CORE** | Shared contracts, signal bus, clocks | **✅ 100% Completed** | [src/core/](file:///Users/mac37/workspace/TRADE/AITrader/src/core) is active. |
-| **D02** | **DATA** | Data loaders, stores, schedulers | **✅ 100% Completed** | [src/data/](file:///Users/mac37/workspace/TRADE/AITrader/src/data) is active with sqlite news/calendar layer. |
-| **D03** | **FUNDAMENTAL** | FinBERT sentiment, macro regime | **🔴 Not Started** | Scheduled for Phase 3. |
-| **D04** | **TECHNICAL** | Technical indicators, confluence | **✅ 100% Completed** | [src/technical/](file:///Users/mac37/workspace/TRADE/AITrader/src/technical) refactored from `src/features/`. |
-| **D05** | **DECISION** | Signal fusion, LLM narratives | **🔴 Not Started** | Scheduled for Phase 4. |
-| **D06** | **EXECUTION** | Order/risk management, SimBroker | **🔴 Not Started** | Scheduled for Phase 4. (Old wrapper exists). |
-| **D07** | **NOTIFIER** | Telegram bot, alert routing | **🔴 Not Started** | Scheduled for Phase 3 (Parallel). |
-| **D08** | **BACKTEST** | CPCV, walk-forward, strategy replay | **✅ 100% Completed** | Refactored engine, added feeds, watch/manual sessions, scoring scorecard, and interactive HTML reporting. |
-| **D09** | **TRAINER** | Model training pipelines | **🔴 Not Started** | Scheduled for Phase 6 (Old codebase models present). |
-| **D10** | **WEBUI** | FastAPI & React frontend dashboard | **✅ 100% Completed** | FastAPI backend + React/TypeScript/Vite frontend deployed. Replaces Streamlit dashboards. |
-| **D11** | **OPS** | Health metrics & logger | **🔴 Not Started** | Scheduled for Phase 7. |
+| Division | Name | Status | Notes |
+|----------|------|--------|-------|
+| **D01** | CORE | ✅ Complete | `contracts.py`, bus, clock, `instruments.yaml` loader, session helpers |
+| **D02** | DATA | 🔶 **Stabilizing** | Dukascopy live poll, auto-refresh, 4 instruments, adaptive poll, gap-fill. Tier 1 polish active. |
+| **D03** | FUNDAMENTAL | 🔶 Partial | `FundamentalAgent` + tests; not started in `main.py` lifespan |
+| **D04** | TECHNICAL | ✅ Complete | `TechnicalEngine`; not subscribed to live bus in WebUI |
+| **D05** | DECISION | 🔶 Partial | `DecisionEngine` + tests; no live `TradeSignal` publisher |
+| **D06** | EXECUTION | 🔶 Partial | `ExecutionEngine` runs in WebUI (paper); awaits live trade signals |
+| **D07** | NOTIFIER | 🔶 Partial | Telegram modules + tests; service not started |
+| **D08** | BACKTEST | ✅ Complete | Replay, CPCV, manual mode, HTML reports |
+| **D09** | TRAINER | 🔶 Legacy | Model registry (22 versions); not wired to live fusion |
+| **D10** | WEBUI | ✅ Data layer | Terminal, 1m–1d charts, TZ selector, live status, config API |
+| **D11** | OPS | 🔴 Minimal | `/api/health` only |
 
 ---
 
-## Completed Implementations (Phase 2b)
+## Config architecture (aligned 2026-06-25)
 
-### 1. Vectorized Backtest Auto-Close Fix
-Fixed [src/backtest/engine.py](file:///Users/mac37/workspace/TRADE/AITrader/src/backtest/engine.py) to force-close any open position on the last historical bar, preventing empty trade results for buy-and-hold signals.
-
-### 2. Thread-Safe Session State
-Created [src/backtest/session_state.py](file:///Users/mac37/workspace/TRADE/AITrader/src/backtest/session_state.py) to track active replay metrics (position summaries, current virtual clock time, speed, status, and portfolio state) thread-safely.
-
-### 3. Strategy & Manual Replay Engines
-Created [src/backtest/replay.py](file:///Users/mac37/workspace/TRADE/AITrader/src/backtest/replay.py):
-- **StrategyReplaySession**: Streams chronological market bars with real-time speed adjustments, pause/resume controls, and publishes to the isolated bus for validation of technical model decisions.
-- **ManualReplaySession**: Deactivates automated signal triggers, allowing human trading step-by-step. Orders are processed via the isolated bus by `SimBroker` / `MockExecutionEngine`.
-
-### 4. Replay Scorer
-Created [src/backtest/scorer.py](file:///Users/mac37/workspace/TRADE/AITrader/src/backtest/scorer.py) to compute performance scorecards containing net profit, win rate, average risk-to-reward ratio, maximum drawdown, and a **discipline score** checking if the manual entries respected their stop-losses.
-
-### 5. Interactive HTML & JSON Reporter
-Created [src/backtest/reporter.py](file:///Users/mac37/workspace/TRADE/AITrader/src/backtest/reporter.py) to export:
-- Performance scorecard JSON.
-- Clean console log summary tables.
-- Modern, interactive HTML reports with dark styling utilizing **Chart.js** CDN for responsive equity curves and trade win/loss distribution charts.
-- Included an auto-cleanup retention policy preserving only the last 50 files.
+| Layer | Source | Purpose |
+|-------|--------|---------|
+| Identity | `src/core/contracts.py` → `Instrument` enum | Valid symbols |
+| Per-instrument | `config/instruments.yaml` | `enabled`, pip, session, weights, `daily_break` |
+| Deployment | `config/dev.yaml` | Pipeline cadence, model, risk (no per-pair trading rules) |
 
 ---
 
-## Completed Implementations (Phase 5 — D10-WEBUI)
+## D02 live data — what works today
 
-### 1. FastAPI Backend ([src/api/](file:///Users/mac37/workspace/TRADE/AITrader/src/api/))
-- `main.py` — FastAPI app with lifespan manager, CORS, and WebSocket endpoint (`/ws`).
-- `routes/signals.py` — REST endpoint for signal history.
-- `routes/portfolio.py` — REST endpoint for live portfolio state.
-- `routes/data.py` — REST endpoint for OHLCV candle queries.
-- `routes/replay.py` — REST endpoint for replay session control.
-- `routes/config.py` — REST endpoint for runtime config editing.
-- `routes/health.py` — REST health probe endpoint.
-- `ws/manager.py` — WebSocket connection manager for real-time push.
-
-### 2. React Frontend ([frontend/](file:///Users/mac37/workspace/TRADE/AITrader/frontend/))
-Stack: **React 19 + TypeScript + Vite + TradingView Lightweight Charts v5 + Zustand + React Router v7**
-
-| Component | File | Purpose |
-| :--- | :--- | :--- |
-| Trading Terminal | `Layout/TradingTerminal.tsx` | Main layout shell |
-| Header | `Layout/Header.tsx` | Top nav bar |
-| Sidebar | `Layout/Sidebar.tsx` | Instrument / timeframe selector |
-| Candle Chart | `Chart/CandleChart.tsx` | TradingView Lightweight Charts candlestick |
-| Indicator Panel | `Chart/IndicatorPanel.tsx` | RSI / MACD sub-chart panels |
-| Fusion Panel | `Panels/FusionPanel.tsx` | Signal confluence display |
-| Portfolio | `Panels/Portfolio.tsx` | Live P&L, positions |
-| Signal Log | `Panels/SignalLog.tsx` | Real-time signal feed |
-| News Feed | `Panels/NewsFeed.tsx` | News / economic calendar |
-| Config Editor | `Panels/ConfigEditor.tsx` | In-UI config editing |
-| Replay Page | `Replay/ReplayPage.tsx` | Full replay terminal UI |
-
-- `hooks/useWebSocket.ts` — Reactive WebSocket hook with auto-reconnect.
-- `hooks/usePortfolio.ts` — Portfolio state hook.
-- `store/signals.ts`, `store/portfolio.ts` — Zustand global stores.
-- `api/client.ts` — Typed REST API client.
-
-> **Streamlit dashboards (`dashboards/`) are superseded.** D10-WEBUI is the active UI layer.
+- All four instruments enabled: EURUSD, GBPUSD, USDJPY, XAUUSD
+- Live scheduler bootstraps H1 background polls; chart focus switches to M1–1d
+- Adaptive poll intervals (slower mid-candle for H1/1d)
+- Auto-refresh: hourly M1 tail + resample; daily 4h/1d
+- Gap-fill: non-blocking for intraday when `auto_refresh` on
+- Chart session filter: FX weekend + gold daily break
+- Frontend: instruments from `GET /api/data/instruments`, timezone selector
 
 ---
 
-## What is Next?
+## Tier 1 — D02 stabilization (current sprint)
 
-### Phase 3 — Fundamental Analysis & Notifier
-Start implementation of:
-1. **D03-FUNDAMENTAL**: News FinBERT sentiment agent, macro regime classifications, and OpenRouter prompt narration templates ([D03-FUNDAMENTAL.md](file:///Users/mac37/workspace/TRADE/AITrader/DEV_PLAN/D03-FUNDAMENTAL.md)).
-2. **D07-NOTIFIER**: Telegram bot alerting and command parsing integration ([D07-NOTIFIER.md](file:///Users/mac37/workspace/TRADE/AITrader/DEV_PLAN/D07-NOTIFIER.md)).
-3. **D08 Wire-in**: Extend `StrategyReplaySession` to initialize and subscribe `FundamentalAgent` signals once Phase 3 is completed.
+**Goal:** Reliable intraday charts under Docker without Dukascopy lock contention.
 
-### Phase 4 — Decision & Execution
-Once Phase 3 is complete:
-1. **D05-DECISION**: Signal fusion engine (TA + FA → TradeSignal).
-2. **D06-EXECUTION**: Order management, risk enforcement, SimBroker wiring.
+| Task | Status |
+|------|--------|
+| Config single source (`instruments.yaml` `enabled`) | ✅ Done |
+| Focus scheduler before gap-fill | ✅ Done |
+| Non-blocking intraday gap-fill | ✅ Done |
+| Live status false "Feed offline" fix | ✅ Done |
+| Prune `active_pairs` on timeframe switch | ✅ Done |
+| Defer startup refresh during intraday focus | ✅ Done |
+| Full test gate in Docker | ⏳ Run `./docker/docker_dev_test.sh` |
+
+---
+
+## Live Web UI architecture (today)
+
+```
+Dukascopy → DataStore → /api/data/ohlcv → Chart
+                ↑
+         DataScheduler → OHLCV_BAR → WebSocket → Chart
+
+NOT wired yet:
+  OHLCV_BAR → TechnicalEngine → DecisionEngine → TradeSignal → Fusion panel
+```
+
+`src/api/main.py` starts: Bus, DataScheduler, ExecutionEngine, DataRefreshWorker.  
+Does **not** start: TechnicalEngine, FundamentalAgent, DecisionEngine.
+
+---
+
+## What is next (priority order)
+
+### Tier 2 — Live signal spine (~1 week)
+
+Wire in `main.py`:
+
+1. `TechnicalEngine` subscribes to `OHLCV_BAR` → `TechnicalSignal`
+2. `DecisionEngine` → `TradeSignal` (fundamental=None OK initially)
+3. Fusion panel + Signal Log populate via existing WebSocket bridge
+
+**Milestone:** Terminal shows live technical fusion on chart instrument.
+
+### Tier 3 — Phase 3 (D03 + D07, ~2–3 weeks)
+
+- Wire `FundamentalAgent` into live + replay
+- Telegram notifier service
+- Replay bus gets historical fundamental signals
+
+### Tier 4 — Phase 4 full paper loop (~2 weeks)
+
+- D05 fusion v1 with `instruments.yaml` weights
+- D06 economic calendar circuit breaker
+- 2-week paper trading with audit traceability
+
+### Tier 5 — Later
+
+- D09 model promotion → D05 registry read
+- D11 ops monitoring
+- Live broker (after paper validation)
+
+---
+
+## Run / verify
+
+```bash
+# Web UI
+bash scripts/start_webui.sh
+
+# Live status
+curl -s http://localhost:8000/api/data/live-status | python3 -m json.tool
+
+# Tests (Docker)
+./docker/docker_dev_test.sh
+```
+
+---
+
+## Reference docs
+
+- [MASTER.md](MASTER.md) — division map and build phases
+- [CONTRACTS.md](CONTRACTS.md) — shared schemas
+- [D02-DATA.md](D02-DATA.md) — data pipeline spec
