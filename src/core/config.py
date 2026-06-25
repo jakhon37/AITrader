@@ -232,6 +232,20 @@ class FundamentalConfig(BaseModel):
         default=True,
         description="Use structured output from OpenRouter for sentiment when backend=openrouter"
     )
+    calendar_briefing_enabled: bool = Field(
+        default=True,
+        description="Generate pre-release calendar briefings via OpenRouter and publish to UI/Telegram",
+    )
+    calendar_min_impact: str = Field(
+        default="medium",
+        pattern="^(low|medium|high)$",
+        description="Minimum calendar impact level to emit a pre-release briefing",
+    )
+    calendar_telegram_min_impact: str = Field(
+        default="high",
+        pattern="^(low|medium|high)$",
+        description="Minimum impact for Telegram pre-release calendar alerts",
+    )
 
 
 # ── New D01 additions ─────────────────────────────────────────────────────────

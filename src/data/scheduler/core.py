@@ -9,6 +9,7 @@ from typing import Any, Optional
 from src.core.bus import Bus
 from src.core.clock import VirtualClock
 from src.core.contracts import Instrument, Timeframe
+from src.core.exceptions import DataError
 from src.core.logging import get_logger
 from src.data.feeds.base import OHLCVFeed
 from src.data.scheduler.fetcher import OHLCVFetcher

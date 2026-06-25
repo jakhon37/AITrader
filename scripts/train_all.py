@@ -20,12 +20,12 @@ import numpy as np
 import pandas as pd
 
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.ensemble import EnsembleModel
-from models.garch_gru import GARCHGRUModel
-from models.lstm_transformer import LSTMTransformerModel
-from models.meta_labeler import MetaLabeler
-from models.model_registry import ModelRegistry
+from trainer.feature_engine import FeatureEngine
+from trainer.models.ensemble import EnsembleModel
+from trainer.models.garch_gru import GARCHGRUModel
+from trainer.models.lstm_transformer import LSTMTransformerModel
+from trainer.models.meta_labeler import MetaLabeler
+from trainer.models.model_registry import ModelRegistry
 
 # Setup logging
 logging.basicConfig(
@@ -252,7 +252,7 @@ class ModelTrainer:
 def main():
     """Main entry point."""
     # Load universal config for defaults
-    from config import load_config
+    from core.config import load_config
     try:
         cfg = load_config()
         default_symbol = cfg.get_primary_symbol()

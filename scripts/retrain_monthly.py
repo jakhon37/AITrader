@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 def main() -> int:
     """Entry point."""
-    from config import AppConfig
+    from core.config import AppConfig
 
     cfg = AppConfig.from_env()
     print(f"Config env: {cfg.env}")

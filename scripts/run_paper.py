@@ -23,8 +23,8 @@ from data.loaders.csv_loader import load_ohlcv_csv
 from data.loaders.live_data import LiveDataFetcher
 from execution.brokers.sim import SimBroker, OrderSide, OrderType
 from execution.engine import ExecutionEngine, ExecutionConfig
-from features.feature_engine import FeatureEngine
-from models.model_registry import ModelRegistry
+from trainer.feature_engine import FeatureEngine
+from trainer.models.model_registry import ModelRegistry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,11 +152,11 @@ class PaperTrader:
 
             # Load model with auto-detected device
             if "garch" in self.model_name.lower():
-                from models.garch_gru import GARCHGRUModel
+                from trainer.models.garch_gru import GARCHGRUModel
                 model = GARCHGRUModel(device=str(self.device))
                 model.load(str(model_path))
             else:
-                from models.lstm_transformer import LSTMTransformerModel
+                from trainer.models.lstm_transformer import LSTMTransformerModel
                 model = LSTMTransformerModel(device=str(self.device))
                 model.load(str(model_path))
 
@@ -366,7 +366,7 @@ class PaperTrader:
 def main():
     """Main entry point."""
     # Load config for defaults
-    from config import load_config
+    from core.config import load_config
     try:
         cfg = load_config()
         default_symbols = cfg.get_symbols_normalized()

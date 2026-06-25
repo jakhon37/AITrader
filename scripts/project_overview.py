@@ -117,7 +117,7 @@ def main() -> None:
     try:
         # Set config dir env temporarily for loader testing
         os.environ["CONFIG_DIR"] = str(config_dir)
-        from config import AppConfig
+        from core.config import AppConfig
         app_config = AppConfig.from_env()
         print_status("Pydantic Config Schema Validation: PASS", True)
     except Exception as e:

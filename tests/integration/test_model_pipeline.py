@@ -14,12 +14,12 @@ import pandas as pd
 import pytest
 
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.ensemble import EnsembleModel
-from models.garch_gru import GARCHGRUModel
-from models.lstm_transformer import LSTMTransformerModel
-from models.meta_labeler import MetaLabeler
-from models.model_registry import ModelRegistry
+from trainer.feature_engine import FeatureEngine
+from trainer.models.ensemble import EnsembleModel
+from trainer.models.garch_gru import GARCHGRUModel
+from trainer.models.lstm_transformer import LSTMTransformerModel
+from trainer.models.meta_labeler import MetaLabeler
+from trainer.models.model_registry import ModelRegistry
 
 
 @pytest.fixture

@@ -22,6 +22,12 @@ from src.core.logging import get_logger
 
 _log = get_logger("D07-NOTIFIER")
 
+_IMPACT_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _impact_meets_minimum(level: str, minimum: str) -> bool:
+    return _IMPACT_RANK.get(level, 0) >= _IMPACT_RANK.get(minimum, 0)
+
 
 class MessageRouter:
     """Evaluates notification filters, including quiet-hours checks and severity filters."""
@@ -147,8 +153,31 @@ class MessageRouter:
 
         return True
 
+    def should_send_calendar_briefing(
+        self,
+        signal: FundamentalSignal,
+        current_time: datetime,
+        min_impact: str = "high",
+    ) -> bool:
+        """Validate if a pre-release calendar briefing should go to Telegram."""
+        event = signal.triggering_event
+        if event is None or event.actual is not None:
+            return False
+
+        rules = self.cfg.get("telegram", {}).get("fundamental_signal", {})
+        if not rules.get("enabled", True):
+            return False
+
+        if not self._respects_quiet_hours("fundamental_signal", current_time):
+            return False
+
+        return _impact_meets_minimum(event.impact, min_impact)
+
     def should_send_fundamental_signal(self, signal: FundamentalSignal, current_time: datetime) -> bool:
         """Validate if a FundamentalSignal should trigger a notification."""
+        if signal.triggering_event is not None and signal.triggering_event.actual is None:
+            return False
+
         rules = self.cfg.get("telegram", {}).get("fundamental_signal", {})
         if not rules.get("enabled", True):
             return False

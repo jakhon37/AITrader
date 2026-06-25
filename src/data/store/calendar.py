@@ -86,7 +86,7 @@ class CalendarMixin:
         self,
         start: datetime,
         end: datetime,
-        impact_filter: Optional[str] = None,
+        impact_filter: Optional[str | list[str]] = None,
     ) -> list[RawCalendarEvent]:
         """Query calendar events in [start, end].
 
@@ -95,8 +95,8 @@ class CalendarMixin:
         start, end:
             UTC-aware datetimes (event timestamp range).
         impact_filter:
-            If provided, one of "low", "medium", "high" — filters to this
-            impact level.  If None, all impact levels are returned.
+            If provided, one impact level or a list of levels ("low", "medium",
+            "high"). If None, all impact levels are returned.
 
         Returns
         -------
@@ -109,11 +109,18 @@ class CalendarMixin:
         """
         if start.tzinfo is None or end.tzinfo is None:
             raise DataError("get_economic_events: start and end must be UTC-aware.")
-        if impact_filter is not None and impact_filter not in ("low", "medium", "high"):
-            raise DataError(
-                f"get_economic_events: invalid impact_filter {impact_filter!r}. "
-                "Must be 'low', 'medium', 'high', or None."
-            )
+        levels: list[str] | None = None
+        if impact_filter is not None:
+            if isinstance(impact_filter, str):
+                levels = [impact_filter]
+            else:
+                levels = list(impact_filter)
+            invalid = [lvl for lvl in levels if lvl not in ("low", "medium", "high")]
+            if invalid:
+                raise DataError(
+                    f"get_economic_events: invalid impact_filter {impact_filter!r}. "
+                    "Must be 'low', 'medium', 'high', or None."
+                )
 
         start_iso = start.astimezone(timezone.utc).isoformat()
         end_iso = end.astimezone(timezone.utc).isoformat()
@@ -127,9 +134,10 @@ class CalendarMixin:
         )
         params: list = [start_iso, end_iso]
 
-        if impact_filter:
-            query += "AND impact = ? "
-            params.append(impact_filter)
+        if levels:
+            placeholders = ", ".join("?" for _ in levels)
+            query += f"AND impact IN ({placeholders}) "
+            params.extend(levels)
 
         query += "ORDER BY timestamp ASC"
 
@@ -159,7 +167,7 @@ class CalendarMixin:
             "calendar_queried",
             start=start.date().isoformat(),
             end=end.date().isoformat(),
-            impact=impact_filter or "all",
+            impact=levels or "all",
             count=len(events),
         )
         return events

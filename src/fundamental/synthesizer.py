@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.core.clock import now
-from src.core.contracts import Direction, Instrument
+from src.core.contracts import Direction, EconomicEvent, Instrument
 from src.core.logging import get_logger
 
 _log = get_logger("D03-FUNDAMENTAL")
@@ -255,4 +255,103 @@ class NarrativeSynthesizer:
             return fallback
         except Exception as e:
             _log.error("synthesizer_api_failed", error=str(e))
+            return fallback
+
+    def _generate_fallback_calendar_briefing(
+        self,
+        instrument: Instrument,
+        event: EconomicEvent,
+        minutes_until: int,
+    ) -> str:
+        """Rule-based pre-release briefing when OpenRouter is unavailable."""
+        impact = event.impact.upper()
+        pairs = ", ".join(i.value for i in event.affected_pairs) or instrument.value
+        forecast = event.forecast if event.forecast is not None else "n/a"
+        previous = event.previous if event.previous is not None else "n/a"
+        return (
+            f"{impact} impact event '{event.name}' in ~{minutes_until}m. "
+            f"Watch {pairs}. Forecast {forecast}, prior {previous}. "
+            f"Expect elevated volatility around release; reduce size or widen stops."
+        )
+
+    async def get_calendar_briefing(
+        self,
+        instrument: Instrument,
+        event: EconomicEvent,
+        minutes_until: int,
+    ) -> str:
+        """Synthesize a pre-release calendar briefing for traders."""
+        fallback = self._generate_fallback_calendar_briefing(instrument, event, minutes_until)
+
+        if not self.api_key:
+            _log.debug("synthesizer_calendar_skip_no_api_key")
+            return fallback
+
+        if not self._update_and_check_budget():
+            return fallback
+
+        current_model = await self.model
+        pairs = ", ".join(i.value for i in event.affected_pairs) or instrument.value
+        forecast = event.forecast if event.forecast is not None else "unknown"
+        previous = event.previous if event.previous is not None else "unknown"
+
+        prompt = (
+            f"You are a professional FX macro strategist. An economic release is scheduled in "
+            f"{minutes_until} minutes.\n"
+            f"Event: {event.name}\n"
+            f"Impact: {event.impact}\n"
+            f"Affected pairs: {pairs}\n"
+            f"Forecast: {forecast} | Previous: {previous}\n"
+            f"Focus instrument: {instrument.value}\n\n"
+            f"In under 80 words, explain: (1) why this matters, (2) directional bias if "
+            f"forecast is met vs beat/miss, (3) practical risk for {instrument.value} traders."
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/jakhon37/AITrader",
+                    "X-Title": "AITrader System",
+                }
+                payload = {
+                    "model": current_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You provide concise, actionable pre-event macro briefings.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.25,
+                    "max_tokens": 140,
+                }
+
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"].strip()
+                    self._daily_spend += self._cost_per_call
+                    return content
+
+                if response.status_code in (400, 404):
+                    self._last_model_selection = None
+                _log.warning(
+                    "synthesizer_calendar_api_error",
+                    status_code=response.status_code,
+                    model=current_model,
+                )
+                return fallback
+
+        except httpx.TimeoutException:
+            _log.warning("synthesizer_calendar_timeout", timeout=self.timeout)
+            return fallback
+        except Exception as e:
+            _log.error("synthesizer_calendar_failed", error=str(e))
             return fallback

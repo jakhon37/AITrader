@@ -1,213 +1,27 @@
 #!/bin/bash
-# AITrader Paper Trading Launcher
-# Starts paper trading + dashboards for real-time simulation
+# AITrader Paper Trading Launcher — starts D10 Web UI (Docker).
 #
+# Paper trading runs inside the FastAPI backend lifespan (ExecutionEngine).
 # Usage:
-#   ./scripts/start_paper.sh [OPTIONS]
-#
-# Options:
-#   --capital AMOUNT      Initial capital (default: 100000)
-#   --symbols SYMBOLS     Comma-separated symbols (default: eurusd)
-#   --model MODEL         Model to use: lstm_transformer, garch_gru (default: lstm_transformer)
-#   --interval SECONDS    Update interval in seconds (default: 3600)
-#   --timeframe FRAME     Data timeframe: 1m, 5m, 15m, 30m, 1h, 1d (default: 1d)
-#   --no-live             Use CSV data instead of live Yahoo Finance
-#
-# Examples:
-#   # Default daily trading with LSTM-Transformer model
 #   ./scripts/start_paper.sh
 #
-#   # Intraday BTC 1-minute trading with latest 1m model
-#   ./scripts/start_paper.sh --symbols btcusd --timeframe 1m --interval 60 --model lstm_transformer
-#
-#   # GARCH-GRU model with multiple symbols
-#   ./scripts/start_paper.sh --model garch_gru --symbols eurusd,gbpusd,gold
-
 set -e
 
-# Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# Configuration
-PAPER_TRADING_PORT=5000
-MONITOR_DASHBOARD_PORT=8501
-FEATURE_EXPLORER_PORT=8502
+NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}🚀 AITrader Paper Trading Launcher${NC}"
+echo -e "${BLUE}🚀 AITrader Paper Trading (via Web UI)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
-
-# Check if already running
-if [ -f .paper_trading.pid ]; then
-    PID=$(cat .paper_trading.pid)
-    if ps -p $PID > /dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Paper trading already running (PID: $PID)${NC}"
-        echo -e "${YELLOW}   Run './scripts/stop_paper.sh' first${NC}"
-        exit 1
-    fi
-fi
-
-# Load defaults from config if available
-if [ -f "config/dev.yaml" ]; then
-    CONFIG_SYMBOL=$(grep -A 1 "symbols:" config/dev.yaml | grep -v "symbols:" | head -1 | sed 's/.*- //;s/_//g' | tr '[:upper:]' '[:lower:]' | xargs)
-    CONFIG_TIMEFRAME=$(grep "timeframe:" config/dev.yaml | sed 's/.*timeframe: "\(.*\)".*/\1/')
-    CONFIG_MODEL=$(grep "model_type:" config/dev.yaml | sed 's/.*model_type: "\(.*\)".*/\1/')
-fi
-
-# Parse arguments (use config defaults if available)
-CAPITAL=${CAPITAL:-100000}
-SYMBOLS=${SYMBOLS:-"${CONFIG_SYMBOL:-btcusd}"}
-INTERVAL=${INTERVAL:-3600}
-TIMEFRAME=${TIMEFRAME:-"${CONFIG_TIMEFRAME:-1d}"}
-MODEL=${MODEL:-"${CONFIG_MODEL:-lstm_transformer}"}  # Default from config or lstm_transformer
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --capital)
-            CAPITAL="$2"
-            shift 2
-            ;;
-        --symbols)
-            SYMBOLS="$2"
-            shift 2
-            ;;
-        --interval)
-            INTERVAL="$2"
-            shift 2
-            ;;
-        --timeframe)
-            TIMEFRAME="$2"
-            shift 2
-            ;;
-        --model)
-            MODEL="$2"
-            shift 2
-            ;;
-        --no-live)
-            NO_LIVE="--no-live"
-            shift
-            ;;
-        *)
-            echo -e "${RED}Unknown option: $1${NC}"
-            exit 1
-            ;;
-    esac
-done
-
-echo -e "${GREEN}📊 Configuration:${NC}"
-echo "   Capital: \$$CAPITAL"
-echo "   Symbols: $SYMBOLS"
-echo "   Model: $MODEL"
-echo "   Interval: ${INTERVAL}s"
-echo "   Timeframe: $TIMEFRAME"
-echo "   Data Source: ${NO_LIVE:+Historical CSV}${NO_LIVE:-Live Yahoo Finance}"
+echo -e "${YELLOW}Paper trading is integrated into the Web UI backend.${NC}"
+echo -e "${YELLOW}Starting Docker Web UI stack...${NC}"
 echo ""
 
-# Create logs directory
-mkdir -p logs
+"$(dirname "${BASH_SOURCE[0]}")/start_webui.sh"
 
-# Start paper trading in background
-echo -e "${YELLOW}1. Starting paper trading...${NC}"
-nohup python scripts/run_paper.py \
-    --capital $CAPITAL \
-    --model $MODEL \
-    --symbols $SYMBOLS \
-    --interval $INTERVAL \
-    --timeframe $TIMEFRAME \
-    $NO_LIVE \
-    > logs/paper_trading.log 2>&1 &
-
-PAPER_PID=$!
-echo $PAPER_PID > .paper_trading.pid
-echo -e "   ${GREEN}✅ Paper trading started (PID: $PAPER_PID)${NC}"
-echo "   📄 Logs: logs/paper_trading.log"
-echo ""
-
-# Wait a bit for paper trading to initialize
-sleep 2
-
-# Start paper monitor dashboard
-echo -e "${YELLOW}2. Starting paper monitor dashboard...${NC}"
-nohup streamlit run dashboards/paper_monitor.py \
-    --server.port $MONITOR_DASHBOARD_PORT \
-    --server.headless true \
-    > logs/monitor_dashboard.log 2>&1 &
-
-MONITOR_PID=$!
-echo $MONITOR_PID > .monitor_dashboard.pid
-echo -e "   ${GREEN}✅ Monitor dashboard started (PID: $MONITOR_PID)${NC}"
-echo "   🌐 URL: http://localhost:$MONITOR_DASHBOARD_PORT"
-echo "   📄 Logs: logs/monitor_dashboard.log"
-echo ""
-
-# Start feature explorer dashboard
-echo -e "${YELLOW}3. Starting feature explorer dashboard...${NC}"
-nohup streamlit run dashboards/feature_explorer.py \
-    --server.port $FEATURE_EXPLORER_PORT \
-    --server.headless true \
-    > logs/feature_explorer.log 2>&1 &
-
-EXPLORER_PID=$!
-echo $EXPLORER_PID > .feature_explorer.pid
-echo -e "   ${GREEN}✅ Feature explorer started (PID: $EXPLORER_PID)${NC}"
-echo "   🌐 URL: http://localhost:$FEATURE_EXPLORER_PORT"
-echo "   📄 Logs: logs/feature_explorer.log"
-echo ""
-
-# Wait for services to start
-echo -e "${YELLOW}⏳ Waiting for services to initialize...${NC}"
-sleep 5
-
-# Check if processes are still running
-FAILED=0
-
-if ! ps -p $PAPER_PID > /dev/null 2>&1; then
-    echo -e "${RED}❌ Paper trading failed to start${NC}"
-    echo "   Check logs/paper_trading.log for errors"
-    FAILED=1
-fi
-
-if ! ps -p $MONITOR_PID > /dev/null 2>&1; then
-    echo -e "${RED}❌ Monitor dashboard failed to start${NC}"
-    echo "   Check logs/monitor_dashboard.log for errors"
-    FAILED=1
-fi
-
-if ! ps -p $EXPLORER_PID > /dev/null 2>&1; then
-    echo -e "${RED}❌ Feature explorer failed to start${NC}"
-    echo "   Check logs/feature_explorer.log for errors"
-    FAILED=1
-fi
-
-if [ $FAILED -eq 1 ]; then
-    echo ""
-    echo -e "${RED}⚠️  Some services failed to start. Cleaning up...${NC}"
-    ./scripts/stop_paper.sh
-    exit 1
-fi
-
-# Success
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}✅ All services running successfully!${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-echo -e "${BLUE}📊 Dashboards:${NC}"
-echo "   • Paper Monitor: http://localhost:$MONITOR_DASHBOARD_PORT"
-echo "   • Feature Explorer: http://localhost:$FEATURE_EXPLORER_PORT"
-echo ""
-echo -e "${BLUE}📝 Logs:${NC}"
-echo "   • Paper Trading: tail -f logs/paper_trading.log"
-echo "   • Monitor: tail -f logs/monitor_dashboard.log"
-echo "   • Feature Explorer: tail -f logs/feature_explorer.log"
-echo "   • Audit Trail: tail -f logs/audit.jsonl"
-echo ""
-echo -e "${BLUE}🛑 To stop all services:${NC}"
-echo "   ./scripts/stop_paper.sh"
-echo ""
-echo -e "${YELLOW}💡 Tip: Open the dashboards in your browser to monitor real-time trading!${NC}"
+echo -e "${GREEN}Paper trading engine runs inside the backend container.${NC}"
+echo -e "${GREEN}Monitor at: http://localhost:5173${NC}"
 echo ""

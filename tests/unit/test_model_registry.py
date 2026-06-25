@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from models.model_registry import ModelRegistry
+from trainer.models.model_registry import ModelRegistry
 
 
 @pytest.fixture

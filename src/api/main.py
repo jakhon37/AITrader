@@ -40,6 +40,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.middleware import RequestLoggingMiddleware
 from src.api.routes import config, data, health, portfolio, signals, replay
 from src.api.ws.handlers import setup_ws_bridge
 from src.api.ws.manager import ws_manager
@@ -68,10 +69,35 @@ import os
 _log = get_logger("D10-WEBUI")
 
 
+def _is_testing() -> bool:
+    """Skip background loops during pytest (prevents TestClient lifespan hangs)."""
+    return os.environ.get("AITRADER_TESTING") == "1"
+
+
+class _TestSchedulerStub:
+    """Minimal scheduler stand-in for API unit tests."""
+
+    def get_live_status(self) -> dict[str, object]:
+        return {
+            "running": False,
+            "active_pairs": [],
+            "live_poll_adaptive": False,
+        }
+
+    def set_focused_pair(self, *_args: object, **_kwargs: object) -> bool:
+        return False
+
+    async def poll_pair_now(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def reset_last_emitted(self) -> None:
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for setting up bus subscriptions and store connections."""
-    _log.info("webui_api_starting")
+    _log.info("webui_api_starting", testing=_is_testing())
 
     # 1. Load Configurations
     app_config = load_config()
@@ -85,6 +111,22 @@ async def lifespan(app: FastAPI):
     bus = create_bus(app_config.core.bus_backend)
     app.state.bus = bus
     await setup_ws_bridge(bus)
+
+    app.state.active_replay_session = None
+    app.state.live_signal_pipeline_paused = False
+
+    if _is_testing():
+        engine = ExecutionEngine(config=app_config, bus=bus)
+        app.state.engine = engine
+        engine.start()
+        app.state.scheduler = _TestSchedulerStub()
+        app.state.dukascopy_feed = None
+        app.state.refresh_worker = None
+        _log.info("webui_api_started_test_mode")
+        yield
+        engine.stop()
+        _log.info("webui_api_shutdown_test_mode")
+        return
 
     # 4. Instantiate Execution Engine (runs in-process for paper trading)
     # Broker selection from config (currently falls back to SimBroker/mock until MT5/IBKR adapters are implemented)
@@ -212,9 +254,6 @@ async def lifespan(app: FastAPI):
     else:
         _log.info("notifier_skipped_no_telegram_key")
 
-    # Initialize active replay session placeholder
-    app.state.active_replay_session = None
-
     _log.info("webui_api_started")
     yield
 
@@ -260,7 +299,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 3. CORS Middleware Configuration
+# 3. Middleware
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Broad in dev mode, restrict in prod

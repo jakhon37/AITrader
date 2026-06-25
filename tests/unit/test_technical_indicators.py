@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.technical_indicators import (
+from technical.indicators import (
     compute_all_indicators,
     compute_atr,
     compute_bollinger_bands,

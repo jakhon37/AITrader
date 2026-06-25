@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from config import AppConfig, DataConfig, RiskConfig
+from core.config import AppConfig, DataConfig, RiskConfig
 
 
 class TestAppConfig:

@@ -12,10 +12,10 @@ from backtest.engine import BacktestConfig, BacktestEngine
 from backtest.metrics import calculate_metrics
 from backtest.walk_forward import WalkForwardConfig, WalkForwardValidator
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.garch_gru import GARCHGRUModel
-from models.lstm_transformer import LSTMTransformerModel
-from models.model_registry import ModelRegistry
+from trainer.feature_engine import FeatureEngine
+from trainer.models.garch_gru import GARCHGRUModel
+from trainer.models.lstm_transformer import LSTMTransformerModel
+from trainer.models.model_registry import ModelRegistry
 
 
 def test_full_backtest_pipeline():

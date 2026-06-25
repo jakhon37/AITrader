@@ -33,16 +33,10 @@ export function ConfigEditor({ instrument, isCollapsed, onToggleCollapse }: Conf
 
   return (
     <div
-      className="glass-panel"
-      style={{
-        padding: 16,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: isCollapsed ? 0 : 8,
-        boxSizing: 'border-box'
-      }}
+      className={`glass-panel ${isCollapsed ? '' : 'panel-shell'}`}
+      style={{ padding: 16, gap: isCollapsed ? 0 : 8 }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: isCollapsed ? 0 : 4 }}>
+      <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: isCollapsed ? 0 : 4 }}>
         <h3 style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Settings size={14} color="var(--neon-cyan)" /> Config
         </h3>
@@ -57,12 +51,12 @@ export function ConfigEditor({ instrument, isCollapsed, onToggleCollapse }: Conf
       </div>
 
       {!isCollapsed && (
-        <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }} onClick={load}>
+        <form onSubmit={save} className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }} onClick={load}>
           <div style={rowStyle}><label style={{ color: 'var(--text-secondary)' }}>Fund. Weight</label><input style={inputStyle} type="number" step={0.05} min={0} max={1} value={config.fundamental_weight} onChange={(e) => setConfig({ ...config, fundamental_weight: parseFloat(e.target.value) })} /></div>
           <div style={rowStyle}><label style={{ color: 'var(--text-secondary)' }}>Tech. Weight</label><input style={inputStyle} type="number" step={0.05} min={0} max={1} value={config.technical_weight} onChange={(e) => setConfig({ ...config, technical_weight: parseFloat(e.target.value) })} /></div>
           <div style={rowStyle}><label style={{ color: 'var(--text-secondary)' }}>Max Lots</label><input style={inputStyle} type="number" step={0.1} min={0.1} value={config.max_position_lots} onChange={(e) => setConfig({ ...config, max_position_lots: parseFloat(e.target.value) })} /></div>
-          <button type="submit" style={{ marginTop: 8, padding: '7px 0', background: 'rgba(0,229,255,0.15)', border: '1px solid rgba(0,229,255,0.35)', borderRadius: 6, color: 'var(--neon-cyan)', fontWeight: 700, cursor: 'pointer', fontSize: 12 }}>Apply</button>
-          {msg && <p style={{ textAlign: 'center', fontSize: 10, color: 'var(--neon-cyan)', margin: 0 }}>{msg}</p>}
+          <button type="submit" style={{ marginTop: 8, padding: '7px 0', background: 'rgba(0,229,255,0.15)', border: '1px solid rgba(0,229,255,0.35)', borderRadius: 6, color: 'var(--neon-cyan)', fontWeight: 700, cursor: 'pointer', fontSize: 12, flexShrink: 0 }}>Apply</button>
+          {msg && <p style={{ textAlign: 'center', fontSize: 10, color: 'var(--neon-cyan)', margin: 0, flexShrink: 0 }}>{msg}</p>}
         </form>
       )}
     </div>

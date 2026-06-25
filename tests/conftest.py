@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+
+# Prevent TestClient from starting live schedulers/fetchers (causes slow/hung teardown).
+os.environ.setdefault("AITRADER_TESTING", "1")
 
 
 @pytest.fixture

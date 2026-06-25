@@ -1,0 +1,52 @@
+# Web UI stack — pre-built images + bind mounts only (no COPY/build of project code).
+services:
+  webui-backend:
+    image: aitrader-dev:latest
+    container_name: aitrader-webui-backend
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src:/app/src:ro
+      - ../config:/app/config:ro
+      - ../data:/app/data:rw
+      - ../models:/app/models:ro
+      - ../logs:/app/logs:rw
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PYTHONPATH: /app/src:/app
+      CONFIG_DIR: /app/config
+      PYTHONUNBUFFERED: "1"
+    working_dir: /app
+    restart: unless-stopped
+    networks:
+      - aitrader-net
+
+  webui-frontend:
+    image: node:20-alpine
+    container_name: aitrader-webui-frontend
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app:rw
+      - frontend_node_modules:/app/node_modules
+    working_dir: /app
+    environment:
+      VITE_API_BASE: /api
+      VITE_PROXY_TARGET: http://aitrader-webui-backend:8000
+      VITE_WS_URL: ws://localhost:8000/ws
+    depends_on:
+      - webui-backend
+    restart: unless-stopped
+    networks:
+      - aitrader-net
+
+networks:
+  aitrader-net:
+    driver: bridge
+
+volumes:
+  frontend_node_modules:

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.feature_engine import FeatureEngine
+from trainer.feature_engine import FeatureEngine
 
 
 @pytest.fixture

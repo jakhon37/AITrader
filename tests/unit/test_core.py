@@ -527,8 +527,10 @@ data:
         assert cfg.env == "dev"
 
     def test_get_symbols_normalized(self) -> None:
-        cfg = AppConfig(data=DataConfig(symbols=["EUR_USD", "GBP_USD"]))
-        assert cfg.get_symbols_normalized() == ["eurusd", "gbpusd"]
+        cfg = AppConfig(
+            data=DataConfig(symbols=["EUR_USD", "GBP_USD", "USD_JPY", "XAUUSD"])
+        )
+        assert cfg.get_symbols_normalized() == ["eurusd", "gbpusd", "usdjpy", "xauusd"]
 
     def test_invalid_env_raises(self) -> None:
         with pytest.raises(Exception):

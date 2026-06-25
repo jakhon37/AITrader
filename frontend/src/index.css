@@ -59,6 +59,33 @@ body {
   box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.6);
 }
 
+/* Panel layout: fixed header + scrollable body within allocated height */
+.panel-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.panel-header {
+  flex-shrink: 0;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.panel-body-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

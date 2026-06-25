@@ -24,11 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import numpy as np
 import pandas as pd
 
-from config import load_config
+from core.config import load_config
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.model_factory import create_model_from_config, get_available_models
-from models.model_registry import ModelRegistry
+from trainer.feature_engine import FeatureEngine
+from trainer.models.model_factory import create_model_from_config, get_available_models
+from trainer.models.model_registry import ModelRegistry
 
 # Setup logging
 logging.basicConfig(

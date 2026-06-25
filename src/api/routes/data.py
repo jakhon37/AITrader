@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 import asyncio
 
+from src.core.clock import now
 from src.core.contracts import Instrument, Timeframe
 from src.core.exceptions import DataError
 from src.core.instruments import get_enabled_instruments
@@ -413,3 +414,61 @@ async def get_economic_events(
     except Exception as e:
         logger.error(f"Error retrieving economic events: {e}")
         return []
+
+
+_IMPACT_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _impact_meets_minimum(level: str, minimum: str) -> bool:
+    return _IMPACT_RANK.get(level, 0) >= _IMPACT_RANK.get(minimum, 0)
+
+
+@router.get("/calendar/upcoming")
+async def get_upcoming_calendar(
+    request: Request,
+    hours: int = Query(48, ge=1, le=168, description="Look-ahead window in hours"),
+    min_impact: str = Query("low", description="Minimum impact: low | medium | high"),
+) -> List[Dict[str, Any]]:
+    """Upcoming economic calendar events with countdown and volatility indicators."""
+    data_store = getattr(request.app.state, "data_store", None)
+    if not data_store:
+        raise HTTPException(status_code=500, detail="DataStore not initialized.")
+
+    if min_impact not in ("low", "medium", "high"):
+        raise HTTPException(status_code=400, detail="min_impact must be low, medium, or high")
+
+    current = now()
+    end = current + timedelta(hours=hours)
+
+    try:
+        events = data_store.get_economic_events(current, end, impact_filter=None)
+    except Exception as e:
+        logger.error(f"Error retrieving upcoming calendar: {e}")
+        return []
+
+    payload: list[dict[str, Any]] = []
+    for evt in events:
+        if not _impact_meets_minimum(evt.impact, min_impact):
+            continue
+
+        minutes_until = max(0, int((evt.timestamp - current).total_seconds() // 60))
+        released = evt.actual is not None and evt.timestamp <= current
+        status = "released" if released else "upcoming"
+
+        payload.append(
+            {
+                "event_id": evt.event_id,
+                "name": evt.name,
+                "timestamp": evt.timestamp.isoformat(),
+                "impact": evt.impact,
+                "instruments": evt.instruments,
+                "forecast": evt.forecast,
+                "previous": evt.previous,
+                "actual": evt.actual,
+                "minutes_until": minutes_until,
+                "status": status,
+                "volatility_risk": evt.impact,
+            }
+        )
+
+    return payload

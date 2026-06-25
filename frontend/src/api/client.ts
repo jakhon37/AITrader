@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
 
 export async function getOHLCV(
   instrument: string,
@@ -70,6 +70,16 @@ export async function getLatestSignals(instrument: string) {
 export async function getFundamentalSignals() {
   const res = await fetch(`${API_BASE}/signals/fundamental`);
   if (!res.ok) throw new Error('Failed to fetch fundamental signals');
+  return res.json();
+}
+
+export async function getUpcomingCalendar(hours = 48, minImpact: 'low' | 'medium' | 'high' = 'low') {
+  const params = new URLSearchParams({
+    hours: String(hours),
+    min_impact: minImpact,
+  });
+  const res = await fetch(`${API_BASE}/data/calendar/upcoming?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch upcoming calendar');
   return res.json();
 }
 

@@ -384,6 +384,11 @@ class CalendarFetcher:
 
         try:
             await self._bus.publish(BusChannel.ECONOMIC_EVENT, event)
+            self._store.mark_event_notified(
+                raw.event_id,
+                pre=not is_post_release,
+                post=is_post_release,
+            )
             _log.info(
                 "economic_event_published",
                 name=raw.name,

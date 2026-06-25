@@ -91,6 +91,35 @@ def format_order_event(event: OrderEvent) -> str:
     return "\n".join(lines)
 
 
+def format_calendar_briefing(signal: FundamentalSignal) -> str:
+    """Format a pre-release calendar briefing for Telegram."""
+    event = signal.triggering_event
+    impact = event.impact.upper() if event else "UNKNOWN"
+    emoji = "🔴" if impact == "HIGH" else "🟠" if impact == "MEDIUM" else "🟡"
+    release_ts = event.timestamp.strftime("%H:%M UTC") if event else "TBD"
+    mins = ""
+    if event and signal.source_headline.startswith("Upcoming:"):
+        mins = signal.source_headline.split("in ", 1)[-1] if "in " in signal.source_headline else ""
+
+    lines = [
+        "📅 <b>Calendar Alert</b>",
+        f"{emoji} <b>{event.name if event else signal.source_headline}</b> — {impact} impact",
+        f"<b>Instrument:</b> {signal.instrument.value}",
+        f"<b>Release:</b> {release_ts}" + (f" ({mins})" if mins else ""),
+    ]
+
+    if event:
+        if event.forecast is not None:
+            lines.append(f"<b>Forecast:</b> {event.forecast}")
+        if event.previous is not None:
+            lines.append(f"<b>Previous:</b> {event.previous}")
+
+    if signal.narrative:
+        lines.append(f"\n<i>{signal.narrative[:320]}</i>")
+
+    return "\n".join(lines)
+
+
 def format_fundamental_signal(signal: FundamentalSignal) -> str:
     """Format a D03-FUNDAMENTAL FundamentalSignal into HTML."""
     emoji = "🟢" if signal.direction == Direction.LONG else "🔴" if signal.direction == Direction.SHORT else "⚪"

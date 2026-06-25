@@ -9,24 +9,24 @@ from __future__ import annotations
 from typing import Any, Optional
 
 # Import existing models
-from models.garch_gru import GARCHGRUModel
-from models.lstm_transformer import LSTMTransformerModel
+from trainer.models.garch_gru import GARCHGRUModel
+from trainer.models.lstm_transformer import LSTMTransformerModel
 
 # Import new models
 try:
-    from models.lightgbm_model import LightGBMModel
+    from trainer.models.lightgbm_model import LightGBMModel
     LIGHTGBM_AVAILABLE = True
 except ImportError:
     LIGHTGBM_AVAILABLE = False
 
 try:
-    from models.xgboost_model import XGBoostModel
+    from trainer.models.xgboost_model import XGBoostModel
     XGBOOST_AVAILABLE = True
 except ImportError:
     XGBOOST_AVAILABLE = False
 
 try:
-    from models.enhanced_transformer import EnhancedTransformerModel
+    from trainer.models.enhanced_transformer import EnhancedTransformerModel
     ENHANCED_TRANSFORMER_AVAILABLE = True
 except ImportError:
     ENHANCED_TRANSFORMER_AVAILABLE = False
@@ -130,7 +130,7 @@ def create_model(
         >>> model = create_model('lstm_transformer', hidden_size=128, device='cuda')
         >>> 
         >>> # From config
-        >>> from config import load_config
+        >>> from core.config import load_config
         >>> cfg = load_config()
         >>> model = create_model_from_config(cfg)
     """
@@ -163,7 +163,7 @@ def create_model_from_config(config: Any, model_type: Optional[str] = None) -> A
         Model instance configured with parameters from config
         
     Example:
-        >>> from config import load_config
+        >>> from core.config import load_config
         >>> cfg = load_config('config/dev.yaml')
         >>> model = create_model_from_config(cfg)
         >>> 

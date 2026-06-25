@@ -3,7 +3,7 @@ import { useSignalsStore } from '../store/signals';
 import { usePortfolioStore } from '../store/portfolio';
 import type { TradeSignal, FundamentalSignal, TechnicalSignal, PortfolioState, WsMessage } from '../types';
 
-const WS_URL = 'ws://localhost:8000/ws';
+const WS_URL = import.meta.env.VITE_WS_URL ?? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws`;
 const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 

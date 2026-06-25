@@ -99,3 +99,6 @@ fundamental:
   aggregation_window_minutes: 15
   min_confidence_to_emit: 0.25
   enable_structured_llm: true
+  calendar_briefing_enabled: true
+  calendar_min_impact: "medium"       # low | medium | high
+  calendar_telegram_min_impact: "high"

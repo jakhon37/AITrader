@@ -67,6 +67,9 @@ class MockSynthesizer:
     async def get_narrative(self, instrument: Instrument, direction: Direction, headline: str, score: float, body_snippet: str | None = None) -> str:
         return f"Mocked narrative for {instrument.value}: {direction.value}"
 
+    async def get_calendar_briefing(self, instrument: Instrument, event: EconomicEvent, minutes_until: int) -> str:
+        return f"Mock briefing for {instrument.value}: {event.name} in {minutes_until}m"
+
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -258,5 +261,85 @@ async def test_agent_economic_event_trigger() -> None:
     assert sig.direction == Direction.SHORT
     assert sig.event_type == FundamentalEventType.ECONOMIC_DATA
     assert sig.triggering_event.signal_id == "evt1"
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_pre_release_calendar_briefing() -> None:
+    from src.core.config import AppConfig
+
+    cfg = AppConfig()
+    cfg.fundamental.calendar_briefing_enabled = True
+    cfg.fundamental.calendar_min_impact = "medium"
+
+    bus = MockBus()
+    store = MockDataStore()
+    agent = FundamentalAgent(
+        config=cfg,
+        bus=bus,
+        store=store,
+        sentiment_scorer=SentimentScorer(use_mock=True),
+        synthesizer=MockSynthesizer(),
+    )
+
+    await agent.start()
+
+    release_at = datetime.now(timezone.utc) + timedelta(minutes=45)
+    event = EconomicEvent(
+        signal_id="evt-pre",
+        timestamp=release_at,
+        name="US CPI YoY",
+        impact="high",
+        affected_pairs=[Instrument.EURUSD, Instrument.GBPUSD],
+        actual=None,
+        forecast=3.1,
+        previous=3.2,
+        surprise_pct=None,
+    )
+
+    await bus.publish(BusChannel.ECONOMIC_EVENT, event)
+
+    signals = [p[1] for p in bus.published if p[0] == BusChannel.FUNDAMENTAL_SIGNAL]
+    assert len(signals) == 2
+    for sig in signals:
+        assert sig.direction == Direction.NEUTRAL
+        assert sig.source_headline.startswith("Upcoming:")
+        assert "Mock briefing" in (sig.narrative or "")
+        assert sig.triggering_event is not None
+        assert sig.triggering_event.actual is None
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_pre_release_skips_low_impact() -> None:
+    from src.core.config import AppConfig
+
+    cfg = AppConfig()
+    cfg.fundamental.calendar_min_impact = "high"
+
+    bus = MockBus()
+    agent = FundamentalAgent(
+        config=cfg,
+        bus=bus,
+        store=MockDataStore(),
+        sentiment_scorer=SentimentScorer(use_mock=True),
+        synthesizer=MockSynthesizer(),
+    )
+    await agent.start()
+
+    event = EconomicEvent(
+        signal_id="evt-low",
+        timestamp=datetime.now(timezone.utc) + timedelta(minutes=30),
+        name="Minor PMI",
+        impact="medium",
+        affected_pairs=[Instrument.EURUSD],
+        actual=None,
+    )
+    await bus.publish(BusChannel.ECONOMIC_EVENT, event)
+
+    signals = [p[1] for p in bus.published if p[0] == BusChannel.FUNDAMENTAL_SIGNAL]
+    assert len(signals) == 0
 
     await agent.stop()

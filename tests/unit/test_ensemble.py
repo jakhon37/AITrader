@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.ensemble import EnsembleModel
+from trainer.models.ensemble import EnsembleModel
 
 
 class MockModel:

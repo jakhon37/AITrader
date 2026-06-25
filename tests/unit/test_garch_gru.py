@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import torch
 
-from models.garch_gru import GARCHGRU, GARCHGRUModel
+from trainer.models.garch_gru import GARCHGRU, GARCHGRUModel
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.meta_labeler import MetaLabeler
+from trainer.models.meta_labeler import MetaLabeler
 
 
 @pytest.fixture

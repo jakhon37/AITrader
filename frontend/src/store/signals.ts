@@ -25,14 +25,42 @@ function instrumentKey(value: string | { value?: string } | undefined): string {
   return String(value.value ?? '').toUpperCase();
 }
 
+const MAX_SIGNALS = 50;
+
+function dedupeBySignalId<T extends { signal_id?: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const id = item.signal_id;
+    if (!id) {
+      out.push(item);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(item);
+  }
+  return out;
+}
+
+function prependUnique<T extends { signal_id?: string }>(items: T[], incoming: T): T[] {
+  if (!incoming.signal_id) {
+    return [incoming, ...items].slice(0, MAX_SIGNALS);
+  }
+  const without = items.filter((x) => x.signal_id !== incoming.signal_id);
+  return [incoming, ...without].slice(0, MAX_SIGNALS);
+}
+
 export const useSignalsStore = create<SignalsStore>((set) => ({
   tradeSignals: [],
   fundamentalSignals: [],
   technicalByInstrument: {},
   healthStatus: { status: 'ok', divisions: {} },
   wsConnected: false,
-  addTradeSignal: (s) => set((state) => ({ tradeSignals: [s, ...state.tradeSignals.slice(0, 49)] })),
-  addFundamentalSignal: (s) => set((state) => ({ fundamentalSignals: [s, ...state.fundamentalSignals.slice(0, 49)] })),
+  addTradeSignal: (s) =>
+    set((state) => ({ tradeSignals: prependUnique(state.tradeSignals, s) })),
+  addFundamentalSignal: (s) =>
+    set((state) => ({ fundamentalSignals: prependUnique(state.fundamentalSignals, s) })),
   setTechnicalSignal: (s) =>
     set((state) => {
       const key = instrumentKey(s.instrument as string | { value?: string });
@@ -50,7 +78,9 @@ export const useSignalsStore = create<SignalsStore>((set) => ({
     }
     return { healthStatus: { status, divisions } };
   }),
-  initTradeSignals: (signals) => set({ tradeSignals: signals.slice(0, 50) }),
-  initFundamentalSignals: (signals) => set({ fundamentalSignals: signals.slice(0, 50) }),
+  initTradeSignals: (signals) =>
+    set({ tradeSignals: dedupeBySignalId(signals).slice(0, MAX_SIGNALS) }),
+  initFundamentalSignals: (signals) =>
+    set({ fundamentalSignals: dedupeBySignalId(signals).slice(0, MAX_SIGNALS) }),
   setWsConnected: (connected) => set({ wsConnected: connected }),
 }));

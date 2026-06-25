@@ -115,7 +115,7 @@ def download(
 
 def main() -> int:
     # Load config for defaults
-    from src.config import load_config
+    from src.core.config import load_config
     try:
         cfg = load_config()
         default_symbols = cfg.get_symbols_normalized()

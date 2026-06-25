@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import torch
 
-from models.lstm_transformer import (
+from trainer.models.lstm_transformer import (
     LSTMTransformer,
     LSTMTransformerModel,
     PositionalEncoding,

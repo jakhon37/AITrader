@@ -69,9 +69,10 @@ live_data = [
   "yfinance>=0.2",
 ]
 
-dashboard = [
-  "streamlit>=1.30",
-  "streamlit-extras>=0.3",
+webui = [
+  "fastapi>=0.100.0",
+  "uvicorn>=0.20.0",
+  "websockets>=11.0",
 ]
 broker = [
   "oanda-v20>=3.0",

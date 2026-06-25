@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.regime_detector import RegimeDetector, detect_regimes
+from trainer.regime_detector import RegimeDetector, detect_regimes
 
 
 @pytest.fixture

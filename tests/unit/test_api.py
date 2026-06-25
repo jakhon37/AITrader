@@ -34,14 +34,16 @@ import pandas as pd
 
 from src.api.main import app
 from src.api.ws.manager import ws_manager
+from datetime import timedelta
+
 from src.core.contracts import BusChannel, Instrument, HealthStatus, SystemHealthEvent
 from src.core.clock import now
+from src.data.models import RawCalendarEvent
 
 
 @pytest.fixture
 def client():
     """Test client fixture."""
-    # Prevent starting real engine/lifespan loops during testing
     with TestClient(app) as test_client:
         yield test_client
 
@@ -104,6 +106,36 @@ def test_portfolio_state_endpoint(client):
     assert "balance" in data
     assert "equity" in data
     assert "open_positions" in data
+
+
+def test_upcoming_calendar_endpoint(client):
+    """Test GET /api/data/calendar/upcoming returns enriched upcoming events."""
+    store = client.app.state.data_store
+    release_at = now() + timedelta(hours=2)
+    store.write_calendar_events(
+        [
+            RawCalendarEvent(
+                event_id="cpi_test",
+                name="US CPI YoY",
+                timestamp=release_at,
+                impact="high",
+                instruments=["EURUSD", "GBPUSD"],
+                forecast=3.1,
+                previous=3.2,
+            )
+        ]
+    )
+
+    response = client.get("/api/data/calendar/upcoming?hours=48&min_impact=medium")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    row = next(item for item in data if item["event_id"] == "cpi_test")
+    assert row["name"] == "US CPI YoY"
+    assert row["impact"] == "high"
+    assert row["status"] == "upcoming"
+    assert row["minutes_until"] >= 110
+    assert row["volatility_risk"] == "high"
 
 
 def test_signals_endpoints(client):

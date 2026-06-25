@@ -43,8 +43,6 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
         hmmlearn>=0.3.0 \
         pandas-ta>=0.4.67b0 \
         yfinance>=0.2 \
-        streamlit>=1.30 \
-        streamlit-extras>=0.3 \
         scikit-learn>=1.3 \
         torch>=2.0 \
         statsmodels>=0.14 \
@@ -68,18 +66,15 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 
 # Create necessary directories (will be populated by mounted volumes)
-RUN mkdir -p logs data models reports config src tests scripts dashboards
+RUN mkdir -p logs data models reports config src tests scripts frontend
 
-# Expose ports for Streamlit dashboards
-EXPOSE 8501 8502
+# Expose ports for D10 Web UI
+EXPOSE 8000 5173
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src:/app
 ENV CONFIG_DIR=/app/config
-ENV STREAMLIT_SERVER_HEADLESS=true
-ENV STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
-
 # Default command - bash for interactive use
 # Actual commands are provided by docker_dev_*.sh scripts
 CMD ["/bin/bash"]

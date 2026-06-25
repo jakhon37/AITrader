@@ -19,6 +19,17 @@ from src.core.logging import get_logger
 
 _log = get_logger("D07-NOTIFIER")
 
+# Telegram errors that will not succeed on retry — drop the queued message.
+_PERMANENT_ERROR_MARKERS = (
+    "not enough rights to send",
+    "chat not found",
+    "bot was blocked by the user",
+    "user is deactivated",
+    "peer_id_invalid",
+    "need administrator rights",
+    "group chat was upgraded to a supergroup",
+)
+
 
 class TelegramClient:
     """Outbound and inbound Telegram interface with token-bucket rate limiting."""
@@ -61,6 +72,8 @@ class TelegramClient:
         self._send_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
         self._handlers: List[Callable[[Dict[str, Any]], Any]] = []
+        self._blocked_chat_ids: Set[str] = set()
+        self._bot_user_id: int | None = None
 
     def register_inbound_handler(self, handler: Callable[[Dict[str, Any]], Any]) -> None:
         """Register a callback for processing authorized inbound messages."""
@@ -72,26 +85,8 @@ class TelegramClient:
             return
         self._running = True
 
-        # Validate chat on startup so errors appear early, not on every signal
         if self.token and self.chat_ids:
-            for cid in self.chat_ids:
-                try:
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        url = f"https://api.telegram.org/bot{self.token}/getChat"
-                        resp = await client.get(url, params={"chat_id": cid})
-                        if resp.status_code != 200:
-                            _log.error(
-                                "telegram_chat_validation_failed",
-                                chat_id=cid,
-                                status=resp.status_code,
-                                body=resp.text[:200],
-                            )
-                        else:
-                            _log.info("telegram_chat_validated", chat_id=cid)
-                except Exception as e:
-                    _log.warning("telegram_chat_validation_error", chat_id=cid, error=str(e))
-            # Only mark client as fully ready if at least one chat validates
-            valid_chats = [c for c in self.chat_ids if c]  # simplistic; real validation is async above
+            await self._validate_delivery_targets()
 
         self.last_refill_time = now()
         self._send_task = asyncio.create_task(self._send_loop())
@@ -139,6 +134,9 @@ class TelegramClient:
             return False
 
         for target_chat in targets:
+            if target_chat in self._blocked_chat_ids:
+                _log.debug("telegram_skip_blocked_chat", chat_id=target_chat)
+                continue
             if len(self.queue) >= 50:
                 # Log overflow and pop oldest
                 dropped_text, _ = self.queue.popleft()
@@ -157,11 +155,12 @@ class TelegramClient:
             await self._consume_token()
 
             text, target_chat = self.queue[0]
-            success = await self._post_message_with_retries(text, target_chat)
-            if success:
+            result = await self._post_message_with_retries(text, target_chat)
+            if result == "sent":
+                self.queue.popleft()
+            elif result == "permanent_failure":
                 self.queue.popleft()
             else:
-                # If unsuccessful, sleep before retrying
                 await asyncio.sleep(2.0)
 
     async def _consume_token(self) -> None:
@@ -178,8 +177,122 @@ class TelegramClient:
 
             await asyncio.sleep(0.1)
 
-    async def _post_message_with_retries(self, text: str, chat_id: str, retries: int = 3) -> bool:
-        """Call Telegram API using HTTPX, handling retries and 429 constraints."""
+    async def _validate_delivery_targets(self) -> None:
+        """Validate configured chats and mark ones the bot cannot post to."""
+        if not self.token:
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                me_resp = await client.get(f"https://api.telegram.org/bot{self.token}/getMe")
+                if me_resp.status_code == 200:
+                    self._bot_user_id = me_resp.json().get("result", {}).get("id")
+        except Exception as e:
+            _log.warning("telegram_getme_failed", error=str(e))
+
+        deliverable = 0
+        for cid in self.chat_ids:
+            can_send = await self._chat_can_receive_messages(cid)
+            if can_send:
+                deliverable += 1
+                _log.info("telegram_chat_validated", chat_id=cid)
+            else:
+                self._blocked_chat_ids.add(cid)
+                _log.error(
+                    "telegram_chat_blocked",
+                    chat_id=cid,
+                    hint=(
+                        "For groups: add bot as admin with 'Post Messages'. "
+                        "For channels: bot must be admin. Or remove this chat_id from TELEGRAM_CHAT_ID."
+                    ),
+                )
+
+        if deliverable == 0:
+            _log.error(
+                "telegram_no_deliverable_chats",
+                configured=self.chat_ids,
+                hint="Fix TELEGRAM_CHAT_ID permissions or use your personal DM chat id only.",
+            )
+
+    async def _chat_can_receive_messages(self, chat_id: str) -> bool:
+        """Best-effort permission check before enqueueing alerts."""
+        if not self.token:
+            return False
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                chat_resp = await client.get(
+                    f"https://api.telegram.org/bot{self.token}/getChat",
+                    params={"chat_id": chat_id},
+                )
+                if chat_resp.status_code != 200:
+                    _log.error(
+                        "telegram_chat_validation_failed",
+                        chat_id=chat_id,
+                        status=chat_resp.status_code,
+                        body=chat_resp.text[:200],
+                    )
+                    return False
+
+                if self._bot_user_id is None:
+                    return True
+
+                member_resp = await client.get(
+                    f"https://api.telegram.org/bot{self.token}/getChatMember",
+                    params={"chat_id": chat_id, "user_id": self._bot_user_id},
+                )
+                if member_resp.status_code != 200:
+                    # Private chats often reject getChatMember — assume DM works.
+                    return chat_id.isdigit() or not chat_id.startswith("-100")
+
+                member = member_resp.json().get("result", {})
+                status = member.get("status", "")
+                if status in {"creator", "administrator"}:
+                    return bool(member.get("can_post_messages", True))
+                if status == "member":
+                    return True
+                if status == "restricted":
+                    return bool(member.get("can_send_messages", False))
+
+                _log.warning(
+                    "telegram_chat_member_status",
+                    chat_id=chat_id,
+                    status=status,
+                )
+                return False
+        except Exception as e:
+            _log.warning("telegram_chat_validation_error", chat_id=chat_id, error=str(e))
+            return chat_id.isdigit()
+
+    def _is_permanent_send_error(self, status_code: int, body: str) -> bool:
+        if status_code not in (400, 403):
+            return False
+        lower = body.lower()
+        return any(marker in lower for marker in _PERMANENT_ERROR_MARKERS)
+
+    def _mark_chat_blocked(self, chat_id: str, reason: str) -> None:
+        if chat_id in self._blocked_chat_ids:
+            return
+        self._blocked_chat_ids.add(chat_id)
+        _log.error(
+            "telegram_chat_send_blocked",
+            chat_id=chat_id,
+            reason=reason,
+            hint=(
+                "Grant the bot post rights in this chat, or remove it from TELEGRAM_CHAT_ID."
+            ),
+        )
+
+    async def _post_message_with_retries(
+        self,
+        text: str,
+        chat_id: str,
+        retries: int = 3,
+    ) -> str:
+        """Call Telegram API using HTTPX. Returns sent | permanent_failure | retry."""
+        if chat_id in self._blocked_chat_ids:
+            return "permanent_failure"
+
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         payload = {
             "chat_id": chat_id,
@@ -190,16 +303,16 @@ class TelegramClient:
         delay = 1.0
         for attempt in range(retries):
             if not self._running:
-                return False
+                return "retry"
 
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     response = await client.post(url, json=payload)
+                    body = response.text
 
                     if response.status_code == 200:
-                        return True
-                    elif response.status_code == 429:
-                        # Handle rate limit (429) backoff instructions
+                        return "sent"
+                    if response.status_code == 429:
                         data = response.json()
                         retry_after = float(
                             data.get("parameters", {}).get("retry_after", 5.0)
@@ -207,14 +320,18 @@ class TelegramClient:
                         _log.warning("telegram_api_429", retry_after=retry_after)
                         await asyncio.sleep(retry_after)
                         continue
-                    else:
-                        _log.error(
-                            "telegram_api_error_code",
-                            status=response.status_code,
-                            body=response.text[:200],
-                            chat_id=str(chat_id)[:4] + "****",  # avoid logging full ID
-                        )
-                        return False
+
+                    if self._is_permanent_send_error(response.status_code, body):
+                        self._mark_chat_blocked(chat_id, body[:200])
+                        return "permanent_failure"
+
+                    _log.error(
+                        "telegram_api_error_code",
+                        status=response.status_code,
+                        body=body[:200],
+                        chat_id=str(chat_id)[:4] + "****",
+                    )
+                    return "retry"
 
             except httpx.HTTPError as e:
                 _log.warning(
@@ -225,7 +342,7 @@ class TelegramClient:
                 await asyncio.sleep(delay)
                 delay *= 2
 
-        return False
+        return "retry"
 
     async def _poll_loop(self) -> None:
         """Long-poll Telegram servers for inbound user commands."""

@@ -1,48 +1,47 @@
 #!/bin/bash
-# Stop all AITrader Web UI services
-#
+# Stop AITrader Web UI Docker containers.
+set -e
 
-# Colors
 GREEN='\033[0;32m'
-RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Get the absolute path to the project directory
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 
-echo -e "${YELLOW}🛑 Stopping AITrader Web UI services...${NC}"
-echo ""
+echo -e "${YELLOW}🛑 Stopping AITrader Web UI...${NC}"
 
-STOPPED=0
+docker stop aitrader-webui-backend aitrader-webui-frontend 2>/dev/null || true
 
-# Stop Docker backend container
-if docker ps -a --format '{{.Names}}' | grep -q "^aitrader-webui-backend$"; then
-    echo -e "${YELLOW}   Stopping backend container...${NC}"
-    docker stop aitrader-webui-backend >/dev/null 2>&1 || true
-    echo -e "   ${GREEN}✅ Stopped backend container (aitrader-webui-backend)${NC}"
-    STOPPED=1
+if command -v docker-compose &>/dev/null; then
+    COMPOSE_CMD="docker-compose"
+elif docker compose version &>/dev/null; then
+    COMPOSE_CMD="docker compose"
+else
+    COMPOSE_CMD=""
 fi
 
-# Stop frontend Vite server
+if [ -n "$COMPOSE_CMD" ]; then
+    cd "$PROJECT_DIR/docker"
+    $COMPOSE_CMD -f docker-compose.webui.yml down 2>/dev/null || true
+    cd "$PROJECT_DIR"
+    $COMPOSE_CMD -f docker-compose.yml down 2>/dev/null || true
+fi
+
 if [ -f "$PROJECT_DIR/.frontend.pid" ]; then
     PID=$(cat "$PROJECT_DIR/.frontend.pid")
-    if ps -p $PID > /dev/null 2>&1; then
-        kill $PID 2>/dev/null || true
-        echo -e "   ${GREEN}✅ Stopped frontend Vite server (PID: $PID)${NC}"
-        STOPPED=1
+    kill "$PID" 2>/dev/null || true
+    rm -f "$PROJECT_DIR/.frontend.pid"
+fi
+
+# Free ports if a stray local Vite is still listening
+for port in 8000 5173; do
+    if command -v lsof >/dev/null 2>&1; then
+        pids=$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            echo -e "   Stopping local process on port ${port}..."
+            kill $pids 2>/dev/null || true
+        fi
     fi
-    rm "$PROJECT_DIR/.frontend.pid"
-fi
+done
 
-# Also kill any stray Vite servers
-pkill -f "vite" 2>/dev/null || true
-
-if [ $STOPPED -eq 0 ]; then
-    echo -e "${YELLOW}ℹ️  No Web UI services were running${NC}"
-else
-    echo ""
-    echo -e "${GREEN}✅ All Web UI services stopped successfully${NC}"
-fi
-
-echo ""
+echo -e "${GREEN}✅ Web UI stopped${NC}"

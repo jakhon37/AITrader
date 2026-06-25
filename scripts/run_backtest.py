@@ -12,10 +12,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from backtest.engine import BacktestConfig, BacktestEngine
 from backtest.metrics import calculate_metrics, print_metrics
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.model_registry import ModelRegistry
-from models.garch_gru import GARCHGRUModel
-from models.lstm_transformer import LSTMTransformerModel
+from trainer.feature_engine import FeatureEngine
+from trainer.models.model_registry import ModelRegistry
+from trainer.models.garch_gru import GARCHGRUModel
+from trainer.models.lstm_transformer import LSTMTransformerModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ def run_backtest(symbol, model_type, model_version, data_dir="data/raw",
 
 def main():
     # Load universal config for defaults
-    from config import load_config
+    from core.config import load_config
     try:
         cfg = load_config()
         default_symbol = cfg.get_primary_symbol()

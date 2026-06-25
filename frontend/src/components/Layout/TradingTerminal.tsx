@@ -11,7 +11,14 @@ import { NewsFeed } from '../Panels/NewsFeed';
 import { Portfolio } from '../Panels/Portfolio';
 import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
-import { focusChartPair, getDataInstruments, getLatestSignals, getTradeSignals, releaseReplaySession } from '../../api/client';
+import {
+  focusChartPair,
+  getDataInstruments,
+  getFundamentalSignals,
+  getLatestSignals,
+  getTradeSignals,
+  releaseReplaySession,
+} from '../../api/client';
 import { useSignalsStore } from '../../store/signals';
 import { useLiveChartStatus } from '../../hooks/useLiveChartStatus';
 import { usePortfolio } from '../../hooks/usePortfolio';
@@ -32,6 +39,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   });
   const connected = useSignalsStore((state) => state.wsConnected);
   const initTradeSignals = useSignalsStore((state) => state.initTradeSignals);
+  const initFundamentalSignals = useSignalsStore((state) => state.initFundamentalSignals);
   const setTechnicalSignal = useSignalsStore((state) => state.setTechnicalSignal);
   const addTradeSignal = useSignalsStore((state) => state.addTradeSignal);
   const { timezone, setTimezone, displayLabel } = useChartTimezone();
@@ -55,6 +63,12 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
       .then((signals) => initTradeSignals(Array.isArray(signals) ? signals : []))
       .catch(() => {});
   }, [initTradeSignals]);
+
+  useEffect(() => {
+    getFundamentalSignals()
+      .then((signals) => initFundamentalSignals(Array.isArray(signals) ? signals : []))
+      .catch(() => {});
+  }, [initFundamentalSignals]);
 
   useEffect(() => {
     getLatestSignals(instrument)
@@ -309,16 +323,14 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
 
           {/* Indicator Panel (Row 2) */}
           <div
-            className="glass-panel"
+            className={`glass-panel ${indicatorCollapsed ? '' : 'panel-shell'}`}
             style={{
               height: indicatorCollapsed ? '36px' : `${indicatorHeight}%`,
               flexShrink: 0,
-              display: 'flex',
-              flexDirection: 'column',
+              minHeight: indicatorCollapsed ? '36px' : 60,
               padding: 0,
-              overflow: 'hidden',
               boxSizing: 'border-box',
-              marginTop: 10
+              marginTop: 10,
             }}
           >
             <div style={{
@@ -340,7 +352,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
               </button>
             </div>
             {!indicatorCollapsed && (
-              <div style={{ flex: 1, minHeight: 0, padding: 8 }}>
+              <div className="panel-body" style={{ padding: 8 }}>
                 <IndicatorPanel instrument={instrument} timeframe={timeframe} />
               </div>
             )}
@@ -356,14 +368,15 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
             className={bottomCollapsed ? 'glass-panel' : ''}
             style={{
               height: bottomCollapsed ? '36px' : '30%',
-              minHeight: bottomCollapsed ? '36px' : 0,
+              minHeight: bottomCollapsed ? '36px' : 80,
+              flexShrink: 0,
               display: 'flex',
               flexDirection: bottomCollapsed ? 'column' : 'row',
               overflow: 'hidden',
               width: '100%',
               gap: 0,
               marginTop: 10,
-              boxSizing: 'border-box'
+              boxSizing: 'border-box',
             }}
           >
             {bottomCollapsed ? (
@@ -388,7 +401,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
               </div>
             ) : (
               <>
-                <div style={{ width: `${portfolioWidth}%`, flexShrink: 0, height: '100%', overflow: 'hidden', position: 'relative' }}>
+                <div style={{ width: `${portfolioWidth}%`, flexShrink: 0, height: '100%', minHeight: 0, overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
                   {/* Header collapse button is added inside Portfolio.tsx or custom wrapper */}
                   <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
                     <button
@@ -404,7 +417,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
 
                 <div className="resize-handle-h" onMouseDown={handlePortfolioResize} />
 
-                <div style={{ flex: 1, minWidth: 0, height: '100%', overflow: 'hidden' }}>
+                <div style={{ flex: 1, minWidth: 0, minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <SignalLog />
                 </div>
               </>
@@ -422,26 +435,33 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
           <div style={{
             flex: 1,
             minWidth: 0,
+            minHeight: 0,
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             gap: 12,
-            overflow: 'hidden'
+            overflow: 'hidden',
           }}>
-            <FusionPanel
-              instrument={instrument}
-              isCollapsed={fusionCollapsed}
-              onToggleCollapse={handleToggleFusionCollapsed}
-            />
-            <NewsFeed
-              isCollapsed={newsCollapsed}
-              onToggleCollapse={handleToggleNewsCollapsed}
-            />
-            <ConfigEditor
-              instrument={instrument}
-              isCollapsed={configCollapsed}
-              onToggleCollapse={handleToggleConfigCollapsed}
-            />
+            <div style={{ flex: fusionCollapsed ? '0 0 auto' : '1 1 0', minHeight: fusionCollapsed ? undefined : 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <FusionPanel
+                instrument={instrument}
+                isCollapsed={fusionCollapsed}
+                onToggleCollapse={handleToggleFusionCollapsed}
+              />
+            </div>
+            <div style={{ flex: newsCollapsed ? '0 0 auto' : '1 1 0', minHeight: newsCollapsed ? undefined : 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <NewsFeed
+                isCollapsed={newsCollapsed}
+                onToggleCollapse={handleToggleNewsCollapsed}
+              />
+            </div>
+            <div style={{ flex: configCollapsed ? '0 0 auto' : '0 1 auto', minHeight: configCollapsed ? undefined : 0, maxHeight: configCollapsed ? undefined : '40%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <ConfigEditor
+                instrument={instrument}
+                isCollapsed={configCollapsed}
+                onToggleCollapse={handleToggleConfigCollapsed}
+              />
+            </div>
           </div>
         )}
       </div>

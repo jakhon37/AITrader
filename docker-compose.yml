@@ -1,68 +1,45 @@
+# Web UI — pre-built images + bind mounts (no project code in images).
 services:
-  # Paper Trading Service
-  paper-trading:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: aitrader-paper
-    command: python scripts/run_paper.py --capital 100000
+  webui-backend:
+    image: aitrader-dev:latest
+    container_name: aitrader-webui-backend
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
     volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./dashboards:/app/dashboards
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./config:/app/config
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./data:/app/data:rw
+      - ./models:/app/models:ro
+      - ./logs:/app/logs:rw
+    env_file:
+      - path: .env
+        required: false
     environment:
-      - PYTHONUNBUFFERED=1
+      PYTHONPATH: /app/src:/app
+      CONFIG_DIR: /app/config
+      PYTHONUNBUFFERED: "1"
+    working_dir: /app
     restart: unless-stopped
     networks:
       - aitrader-net
 
-  # Paper Monitor Dashboard
-  monitor-dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: aitrader-monitor
-    command: streamlit run dashboards/paper_monitor.py --server.port 8501 --server.headless true
+  webui-frontend:
+    image: node:20-alpine
+    container_name: aitrader-webui-frontend
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
     ports:
-      - "8501:8501"
+      - "5173:5173"
     volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./dashboards:/app/dashboards
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./config:/app/config
+      - ./frontend:/app:rw
+      - frontend_node_modules:/app/node_modules
+    working_dir: /app
     environment:
-      - PYTHONUNBUFFERED=1
-      - STREAMLIT_SERVER_HEADLESS=true
+      VITE_API_BASE: /api
+      VITE_PROXY_TARGET: http://aitrader-webui-backend:8000
+      VITE_WS_URL: ws://localhost:8000/ws
     depends_on:
-      - paper-trading
-    restart: unless-stopped
-    networks:
-      - aitrader-net
-
-  # Feature Explorer Dashboard
-  feature-explorer:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: aitrader-explorer
-    command: streamlit run dashboards/feature_explorer.py --server.port 8502 --server.headless true
-    ports:
-      - "8502:8502"
-    volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./dashboards:/app/dashboards
-      - ./data:/app/data
-      - ./config:/app/config
-    environment:
-      - PYTHONUNBUFFERED=1
-      - STREAMLIT_SERVER_HEADLESS=true
+      - webui-backend
     restart: unless-stopped
     networks:
       - aitrader-net
@@ -72,6 +49,4 @@ networks:
     driver: bridge
 
 volumes:
-  logs:
-  data:
-  models:
+  frontend_node_modules:

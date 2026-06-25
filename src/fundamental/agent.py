@@ -35,6 +35,12 @@ from src.fundamental.sentiment import SentimentScorer
 
 _log = get_logger("D03-FUNDAMENTAL")
 
+_IMPACT_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _impact_meets_minimum(level: str, minimum: str) -> bool:
+    return _IMPACT_RANK.get(level, 0) >= _IMPACT_RANK.get(minimum, 0)
+
 
 class FundamentalAgent:
     """Coordinates fundamental data processing, sentiment analysis, and signal emission."""
@@ -261,9 +267,9 @@ class FundamentalAgent:
         )
 
     async def handle_economic_event(self, event: EconomicEvent) -> None:
-        """Immediate event-driven Path 2: Respond to post-release calendar updates."""
+        """Respond to calendar events: pre-release briefings and post-release scoring."""
         if event.actual is None:
-            # Ignore pre-releases for signal generation
+            await self._handle_pre_release_event(event)
             return
 
         _log.info("fundamental_agent_economic_event_received", event_id=event.signal_id, name=event.name)
@@ -349,5 +355,87 @@ class FundamentalAgent:
                 instrument=inst.value,
                 direction=direction.value,
                 surprise=f"{surprise_pct:+.2%}",
+                impact=event.impact,
+            )
+
+    async def _handle_pre_release_event(self, event: EconomicEvent) -> None:
+        """Publish pre-release calendar briefings for upcoming high-impact events."""
+        fund_cfg = getattr(self.config, "fundamental", None)
+        if fund_cfg is not None and not getattr(fund_cfg, "calendar_briefing_enabled", True):
+            return
+
+        min_impact = getattr(fund_cfg, "calendar_min_impact", "medium") if fund_cfg else "medium"
+        if not _impact_meets_minimum(event.impact, min_impact):
+            _log.debug(
+                "calendar_briefing_skipped_impact",
+                name=event.name,
+                impact=event.impact,
+                min_impact=min_impact,
+            )
+            return
+
+        current_time = now()
+        minutes_until = max(0, int((event.timestamp - current_time).total_seconds() // 60))
+        _log.info(
+            "fundamental_agent_pre_release_event",
+            event_id=event.signal_id,
+            name=event.name,
+            minutes_until=minutes_until,
+            impact=event.impact,
+        )
+
+        strength_map = {
+            "high": SignalStrength.STRONG,
+            "medium": SignalStrength.MODERATE,
+            "low": SignalStrength.WEAK,
+        }
+        strength = strength_map.get(event.impact, SignalStrength.MODERATE)
+        confidence_map = {"high": 0.85, "medium": 0.65, "low": 0.4}
+        confidence = confidence_map.get(event.impact, 0.5)
+
+        targets = event.affected_pairs or [Instrument.EURUSD]
+        for inst in targets:
+            inst_config = self.instrument_configs.get(inst)
+            if not inst_config:
+                inst_config = InstrumentConfig(
+                    pip_size=0.0001,
+                    lot_size=100000,
+                    session_hours={"open": "22:00", "close": "22:00"},
+                    active_timeframes=[],
+                    primary_timeframe=Timeframe.H1,
+                )
+
+            decay_hours = get_decay_hours(FundamentalEventType.ECONOMIC_DATA, inst_config)
+            valid_until = event.timestamp + timedelta(hours=decay_hours)
+
+            narrative = await self.synthesizer.get_calendar_briefing(
+                instrument=inst,
+                event=event,
+                minutes_until=minutes_until,
+            )
+
+            signal = FundamentalSignal(
+                signal_id=new_signal_id(),
+                instrument=inst,
+                timestamp=current_time,
+                valid_until=valid_until,
+                direction=Direction.NEUTRAL,
+                confidence=confidence,
+                strength=strength,
+                sentiment_score=0.0,
+                event_type=FundamentalEventType.ECONOMIC_DATA,
+                source_headline=f"Upcoming: {event.name} in {minutes_until}m",
+                source_url=None,
+                decay_hours=decay_hours,
+                narrative=narrative,
+                triggering_event=event,
+            )
+
+            await self.bus.publish(BusChannel.FUNDAMENTAL_SIGNAL, signal)
+            _log.info(
+                "calendar_briefing_published",
+                instrument=inst.value,
+                name=event.name,
+                minutes_until=minutes_until,
                 impact=event.impact,
             )

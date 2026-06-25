@@ -20,10 +20,10 @@ import pandas as pd
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from config import load_config
+from core.config import load_config
 from data.loaders.csv_loader import load_ohlcv_csv
-from features.feature_engine import FeatureEngine
-from models.model_factory import (
+from trainer.feature_engine import FeatureEngine
+from trainer.models.model_factory import (
     create_model,
     get_available_models,
     get_recommended_hyperparameters,

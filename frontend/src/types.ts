@@ -42,9 +42,25 @@ export interface FundamentalSignal {
   timestamp: string;
   direction: string;
   confidence: number;
+  strength?: string;
   sentiment_score: number;
   event_type: string;
   source_headline: string;
+  narrative?: string | null;
+}
+
+export interface UpcomingCalendarEvent {
+  event_id: string;
+  name: string;
+  timestamp: string;
+  impact: 'low' | 'medium' | 'high';
+  instruments: string[];
+  forecast: number | null;
+  previous: number | null;
+  actual: number | null;
+  minutes_until: number;
+  status: 'upcoming' | 'released';
+  volatility_risk: 'low' | 'medium' | 'high';
 }
 
 export interface TimeframeBias {

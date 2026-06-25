@@ -23,6 +23,7 @@ from src.core.logging import get_logger
 from src.notifier.aggregator import MessageAggregator
 from src.notifier.commands import CommandCache, CommandProcessor
 from src.notifier.formatters import (
+    format_calendar_briefing,
     format_fundamental_signal,
     format_order_event,
     format_system_health,
@@ -124,9 +125,20 @@ class NotifierService:
     async def handle_fundamental_signal(self, signal: FundamentalSignal) -> None:
         """Throttles and routes FundamentalSignals to Telegram."""
         self.cache.add_fundamental_signal(signal)
+        current = now()
 
-        if self.router.should_send_fundamental_signal(signal, now()):
-            if self.aggregator.should_send_fundamental(signal, now()):
+        fund_cfg = getattr(self.config, "fundamental", None)
+        calendar_min = (
+            getattr(fund_cfg, "calendar_telegram_min_impact", "high") if fund_cfg else "high"
+        )
+
+        if self.router.should_send_calendar_briefing(signal, current, min_impact=calendar_min):
+            text = format_calendar_briefing(signal)
+            await self.client.send_message(text)
+            return
+
+        if self.router.should_send_fundamental_signal(signal, current):
+            if self.aggregator.should_send_fundamental(signal, current):
                 text = format_fundamental_signal(signal)
                 await self.client.send_message(text)
 

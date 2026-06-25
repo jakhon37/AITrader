@@ -18,8 +18,9 @@ echo "🧪 Running tests in Docker (Python 3.12)..."
 echo "📁 Project: $PROJECT_DIR"
 echo ""
 
-# Default pytest args: run all tests with verbose + short tracebacks
-PYTEST_ARGS="${@:---tb=short -q}"
+# Default pytest args: quiet summary; pass extra args to run a subset, e.g.:
+#   ./docker/docker_dev_test.sh tests/unit/test_core.py -v
+PYTEST_ARGS="${@:---tb=line -q}"
 
 ENV_FILE_ARG=""
 if [ -f "$PROJECT_DIR/.env" ]; then

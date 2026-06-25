@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from features.causal_validator import (
+from technical.causal import (
     granger_causality,
     select_causal_features,
     validate_features,
