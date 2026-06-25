@@ -1,7 +1,9 @@
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
+import { isInactiveFlatBar, isInstrumentSessionBar } from '../../utils/fxSession';
 
 export const LOOKBACK: Record<string, number> = {
-  '1m': 2, '5m': 5, '15m': 10, '30m': 20, '1h': 40, '4h': 180, '1d': 1000, '1w': 7000,
+  // 1m: yfinance max window is 7 days — load full week for continuity
+  '1m': 7, '5m': 7, '15m': 14, '30m': 20, '1h': 40, '4h': 180, '1d': 1000, '1w': 7000,
 };
 
 /** Default number of candles to show when auto-fitting the viewport. */
@@ -77,7 +79,7 @@ export function logicalToDrawingTime(
 }
 
 export const PAGINATION_LOOKBACK: Record<string, number> = {
-  '1m': 2,
+  '1m': 7,
   '5m': 7,
   '15m': 20,
   '30m': 40,
@@ -259,18 +261,47 @@ export const snapTimeToBar = (barTimes: readonly number[], time: number): number
   return idx === -1 ? time : barTimes[idx];
 };
 
-export const isTradingBar = (bar: { time: number; open: number; close: number; volume?: number }): boolean => {
-  const dt = new Date(bar.time * 1000);
-  const day = dt.getUTCDay();
-  const hour = dt.getUTCHours();
+export type TradingBarOptions = {
+  /** Allow zero-volume flat bars (common for forex live feeds). */
+  allowZeroVolume?: boolean;
+};
 
-  if (day === 6) return false;
-  if (day === 5 && hour >= 22) return false;
-  if (day === 0 && hour < 22) return false;
+/** Minimal OHLCV validation for live terminal charts — keeps all API bars. */
+export const isValidChartBar = (bar: {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}): boolean => {
+  const t = typeof bar.time === 'number' ? bar.time : Number(bar.time);
+  if (!Number.isFinite(t) || t <= 0) return false;
+  return [bar.open, bar.high, bar.low, bar.close].every((v) => Number.isFinite(Number(v)));
+};
 
-  if (bar.volume !== undefined && bar.volume === 0 && bar.open === bar.close) {
-    return false;
-  }
+export type ChartBarFilterOptions = {
+  replayMode?: boolean;
+  instrument?: string;
+};
 
+export function filterChartBars(
+  data: { time: number; open: number; high: number; low: number; close: number; volume?: number }[],
+  options?: ChartBarFilterOptions,
+): typeof data {
+  if (!Array.isArray(data)) return [];
+  const instrument = options?.instrument;
+  return data.filter(
+    (bar) => isValidChartBar(bar) && isTradingBar(bar, { instrument }),
+  );
+}
+
+export const isTradingBar = (
+  bar: { time: number; open: number; high: number; low: number; close: number; volume?: number },
+  options?: TradingBarOptions & { instrument?: string },
+): boolean => {
+  const t = typeof bar.time === 'number' ? bar.time : Number(bar.time);
+  const instrument = options?.instrument;
+  if (!Number.isFinite(t) || !isInstrumentSessionBar(t, instrument)) return false;
+  if (isInactiveFlatBar(bar, instrument)) return false;
   return true;
 };

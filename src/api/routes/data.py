@@ -7,43 +7,35 @@ import asyncio
 
 from src.core.contracts import Instrument, Timeframe
 from src.core.exceptions import DataError
+from src.core.instruments import get_enabled_instruments
+from src.core.session import is_chart_bar
+from src.core.gap_fill import store_needs_gap_fill
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/data", tags=["data"])
 
 
-# yfinance symbol mapping
-SYMBOL_MAP = {
-    Instrument.EURUSD: "EURUSD=X",
-    Instrument.GBPUSD: "GBPUSD=X",
-    Instrument.USDJPY: "USDJPY=X",
-    Instrument.XAUUSD: "GC=F",
+from src.data.feeds.dukascopy import DukascopyFeed
+
+_TF_STEP = {
+    Timeframe.M1:  timedelta(minutes=1),
+    Timeframe.M5:  timedelta(minutes=5),
+    Timeframe.M15: timedelta(minutes=15),
+    Timeframe.M30: timedelta(minutes=30),
+    Timeframe.H1:  timedelta(hours=1),
+    Timeframe.H4:  timedelta(hours=4),
+    Timeframe.D1:  timedelta(days=1),
+    Timeframe.W1:  timedelta(weeks=1),
 }
 
-# Timeframe mapping
-TF_MAP = {
-    Timeframe.M1:  "1m",
-    Timeframe.M5:  "5m",
-    Timeframe.M15: "15m",
-    Timeframe.M30: "30m",
-    Timeframe.H1:  "1h",
-    Timeframe.H4:  "1h",   # resample from 1h
-    Timeframe.D1:  "1d",
-    Timeframe.W1:  "1wk",
+# Intraday candles must be backfilled across the full requested window — not just
+# the tail after last_ts — or 1m charts show multi-day holes (e.g. Jun 22–24 missing).
+_INTRADAY_TIMEFRAMES = {
+    Timeframe.M1,
+    Timeframe.M5,
+    Timeframe.M15,
+    Timeframe.M30,
 }
-
-
-def _resample_df_to_4h(df: pd.DataFrame) -> pd.DataFrame:
-    resampled = pd.DataFrame()
-    resampled['open'] = df['open'].resample('4h').first()
-    resampled['high'] = df['high'].resample('4h').max()
-    resampled['low'] = df['low'].resample('4h').min()
-    resampled['close'] = df['close'].resample('4h').last()
-    if 'volume' in df.columns:
-        resampled['volume'] = df['volume'].resample('4h').sum()
-    else:
-        resampled['volume'] = 0.0
-    return resampled.dropna()
 
 
 async def fill_data_gaps(
@@ -52,31 +44,15 @@ async def fill_data_gaps(
     timeframe: Timeframe,
     start_dt: datetime,
     end_dt: datetime,
+    feed: Optional[DukascopyFeed] = None,
 ) -> None:
-    """Check data store for gaps and download missing candles from Yahoo Finance."""
+    """Check data store for gaps and download missing candles from Dukascopy."""
     now_dt = datetime.now(timezone.utc)
     start_dt = start_dt.astimezone(timezone.utc)
     end_dt = min(end_dt.astimezone(timezone.utc), now_dt)
 
     first_ts, last_ts = data_store.list_ohlcv_range(instrument, timeframe)
-    
-    # Decide what range we need to download
-    download_start = start_dt
-    download_end = end_dt
 
-    if last_ts is not None:
-        last_ts = last_ts.astimezone(timezone.utc)
-        if last_ts < end_dt:
-            download_start = last_ts
-        else:
-            first_ts = first_ts.astimezone(timezone.utc)
-            if start_dt < first_ts:
-                download_start = start_dt
-                download_end = first_ts
-            else:
-                return
-
-    # Check yfinance limits for the timeframe
     timeframe_limits_days = {
         Timeframe.M1: 7,
         Timeframe.M5: 59,
@@ -86,69 +62,93 @@ async def fill_data_gaps(
         Timeframe.H4: 729,
     }
     limit_days = timeframe_limits_days.get(timeframe)
-    if limit_days is not None:
-        earliest_allowed = now_dt - timedelta(days=limit_days)
-        if download_start < earliest_allowed:
-            download_start = earliest_allowed
+    earliest_allowed = (
+        now_dt - timedelta(days=limit_days) if limit_days is not None else start_dt
+    )
+    window_start = max(start_dt, earliest_allowed)
+    download_end = end_dt
+
+    if window_start >= download_end:
+        return
+
+    # Intraday: tail-fill only — never block chart loads on a multi-day first fetch.
+    _INTRADAY_EMPTY_TAIL_DAYS = {
+        Timeframe.M1: 2,
+        Timeframe.M5: 3,
+        Timeframe.M15: 5,
+        Timeframe.M30: 7,
+    }
+    if timeframe in _INTRADAY_TIMEFRAMES:
+        if last_ts is None:
+            tail_days = _INTRADAY_EMPTY_TAIL_DAYS.get(timeframe, 2)
+            download_start = max(
+                window_start,
+                now_dt - timedelta(days=tail_days),
+            )
+        else:
+            last_ts = last_ts.astimezone(timezone.utc)
+            download_start = last_ts
+            if download_start >= download_end:
+                return
+    elif last_ts is None:
+        download_start = window_start
+    else:
+        last_ts = last_ts.astimezone(timezone.utc)
+        if last_ts < download_end:
+            download_start = last_ts + _TF_STEP.get(timeframe, timedelta(hours=1))
+            if download_start < window_start:
+                download_start = window_start
+        else:
+            first_ts = first_ts.astimezone(timezone.utc) if first_ts is not None else None
+            if first_ts is not None and window_start < first_ts:
+                download_start = window_start
+                download_end = first_ts
+            else:
+                return
 
     if download_start >= download_end:
         return
 
-    symbol = SYMBOL_MAP.get(instrument)
-    interval = TF_MAP.get(timeframe)
-    if not symbol or not interval:
-        logger.warning(f"No yfinance mapping for {instrument} or {timeframe}")
-        return
-
-    logger.info(f"Downloading gap data for {instrument.value} ({symbol}) [{download_start} -> {download_end}] interval={interval}")
+    duka = feed or DukascopyFeed()
+    logger.info(
+        f"Downloading gap data from Dukascopy for {instrument.value} "
+        f"[{download_start} -> {download_end}] tf={timeframe.value}"
+    )
 
     try:
-        import yfinance as yf
         loop = asyncio.get_event_loop()
         df = await loop.run_in_executor(
             None,
-            lambda: yf.download(
-                symbol,
-                start=download_start,
-                end=download_end,
-                interval=interval,
-                progress=False,
-            )
+            lambda: duka.fetch_range(
+                instrument,
+                timeframe,
+                download_start,
+                download_end,
+                allow_empty=True,
+            ),
         )
 
         if df.empty:
-            logger.info(f"No data returned from yfinance for {symbol} interval={interval} in range [{download_start} -> {download_end}]")
+            logger.info(
+                f"No Dukascopy data for {instrument.value} "
+                f"in range [{download_start.date()} -> {download_end.date()}] — skipping"
+            )
             return
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df.columns = [str(col).lower() for col in df.columns]
-
-        required_cols = {"open", "high", "low", "close"}
-        if not required_cols.issubset(set(df.columns)):
-            logger.error(f"yfinance missing required columns for {symbol}. Got: {list(df.columns)}")
-            return
-
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
-        if df.index.tz is None:
-            df.index = df.index.tz_localize("UTC")
-        else:
-            df.index = df.index.tz_convert("UTC")
-
-        if timeframe == Timeframe.H4 and interval == "1h":
-            df = _resample_df_to_4h(df)
-
-        if "volume" not in df.columns:
-            df["volume"] = 0.0
-        else:
-            df["volume"] = df["volume"].astype(float).fillna(0.0)
 
         data_store.write_ohlcv(instrument, timeframe, df)
-        logger.info(f"Successfully backfilled {len(df)} candles for {instrument.value} ({timeframe.value})")
+        logger.info(
+            f"Successfully backfilled {len(df)} candles for "
+            f"{instrument.value} ({timeframe.value}) from Dukascopy"
+        )
 
+    except DataError as exc:
+        logger.info(
+            f"Gap fill skipped for {instrument.value} ({timeframe.value}): {exc}"
+        )
     except Exception as exc:
-        logger.exception(f"Failed to fetch/save gap data for {instrument.value} ({timeframe.value}): {exc}")
+        logger.warning(
+            f"Failed to fetch/save gap data for {instrument.value} ({timeframe.value}): {exc}"
+        )
 
 
 def parse_datetime(dt_str: str) -> datetime:
@@ -187,19 +187,34 @@ async def get_ohlcv(
     start_dt = parse_datetime(start)
     end_dt = parse_datetime(end)
 
-    # Fill gaps dynamically using yfinance
-    try:
-        await fill_data_gaps(data_store, inst, tf, start_dt, end_dt)
-    except Exception as exc:
-        logger.exception(f"Failed during fill_data_gaps check: {exc}")
-
-    # Register for live streaming only outside an active replay session.
-    # Replay charts fetch history repeatedly; activating the scheduler injects
-    # real-time bars that freeze the chart price-line indicator.
+    # Focus scheduler first so intraday charts get live polls while gap-fill runs.
     scheduler = getattr(request.app.state, "scheduler", None)
     replay_active = getattr(request.app.state, "active_replay_session", None) is not None
     if scheduler and not replay_active:
-        scheduler.add_active_pair(inst, tf)
+        scheduler.set_focused_pair(inst, tf)
+
+    app_config = getattr(request.app.state, "app_config", None)
+    auto_refresh = (
+        app_config is not None
+        and app_config.data.pipeline.auto_refresh
+        and app_config.data.source == "dukascopy"
+    )
+    if store_needs_gap_fill(data_store, inst, tf, end_dt, auto_refresh=auto_refresh):
+        shared_feed = getattr(request.app.state, "dukascopy_feed", None)
+
+        async def _run_gap_fill() -> None:
+            try:
+                await fill_data_gaps(
+                    data_store, inst, tf, start_dt, end_dt, feed=shared_feed
+                )
+            except Exception as exc:
+                logger.exception(f"Failed during fill_data_gaps check: {exc}")
+
+        # Intraday + auto-refresh: never block the chart HTTP request on Dukascopy.
+        if auto_refresh and tf in _INTRADAY_TIMEFRAMES:
+            asyncio.create_task(_run_gap_fill())
+        else:
+            await _run_gap_fill()
 
     try:
         df = data_store.get_ohlcv(inst, tf, start_dt, end_dt)
@@ -214,7 +229,22 @@ async def get_ohlcv(
         ts_ns = pd.to_datetime(df_reset["timestamp"], utc=True).astype("datetime64[ns, UTC]")
         df_reset["time"] = ts_ns.astype("int64") // 10**9
 
-        candles = df_reset[["time", "open", "high", "low", "close", "volume"]].to_dict(orient="records")
+        records = df_reset[["time", "open", "high", "low", "close", "volume"]].to_dict(
+            orient="records"
+        )
+        candles = []
+        for row in records:
+            ts = pd.to_datetime(row["time"], unit="s", utc=True).to_pydatetime()
+            if is_chart_bar(
+                ts,
+                inst,
+                float(row["open"]),
+                float(row["high"]),
+                float(row["low"]),
+                float(row["close"]),
+                float(row.get("volume", 0) or 0),
+            ):
+                candles.append(row)
         return candles
     except DataError as e:
         logger.warning(f"DataError retrieving OHLCV: {e}")
@@ -222,6 +252,49 @@ async def get_ohlcv(
     except Exception as e:
         logger.error(f"Error retrieving OHLCV: {e}")
         raise HTTPException(status_code=500, detail="Internal server error retrieving chart data.")
+
+
+@router.get("/live-status")
+async def get_live_status(request: Request) -> Dict[str, Any]:
+    """Return DataScheduler health for the terminal live-chart status UI."""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=500, detail="Scheduler not initialized.")
+    replay_active = getattr(request.app.state, "active_replay_session", None) is not None
+    status = scheduler.get_live_status()
+    status["replay_active"] = replay_active
+    refresh_worker = getattr(request.app.state, "refresh_worker", None)
+    if refresh_worker is not None:
+        status["data_refresh"] = refresh_worker.get_status()
+    status["enabled_instruments"] = [inst.value for inst in get_enabled_instruments()]
+    return status
+
+
+@router.get("/instruments")
+async def list_data_instruments() -> Dict[str, Any]:
+    """Return instruments enabled for Dukascopy refresh and live scheduling."""
+    from src.core.config import load_instruments
+
+    configs = load_instruments()
+    enabled = get_enabled_instruments()
+    return {
+        "enabled": [inst.value for inst in enabled],
+        "supported": [inst.value for inst in Instrument],
+        "configs": {
+            inst.value: {
+                "enabled": cfg.enabled,
+                "pip_size": cfg.pip_size,
+                "session_hours": cfg.session_hours,
+                "daily_break": (
+                    {"start": cfg.daily_break.start, "end": cfg.daily_break.end}
+                    if cfg.daily_break
+                    else None
+                ),
+                "primary_timeframe": cfg.primary_timeframe.value,
+            }
+            for inst, cfg in configs.items()
+        },
+    }
 
 
 @router.get("/news")

@@ -282,6 +282,29 @@ class TestControl:
         scheduler.add_active_pair(EURUSD, H1)
         assert scheduler.active_pairs == [(EURUSD, H1)]
 
+    def test_set_focused_pair_registers_and_tracks(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        scheduler = DataScheduler(
+            bus=mock_bus, store=mock_store, clock=LiveClock(),
+            fetcher=mock_fetcher, active_pairs=[],
+        )
+        scheduler.set_focused_pair(EURUSD, H1)
+        assert scheduler.focused_pair == (EURUSD, H1)
+        assert scheduler.active_pairs == [(EURUSD, H1)]
+
+    def test_get_live_status_shape(
+        self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
+    ) -> None:
+        scheduler = DataScheduler(
+            bus=mock_bus, store=mock_store, clock=LiveClock(),
+            fetcher=mock_fetcher, active_pairs=[(EURUSD, H1)],
+        )
+        status = scheduler.get_live_status()
+        assert status["running"] is False
+        assert status["active_pairs"] == [{"instrument": "EURUSD", "timeframe": "1h"}]
+        assert status["poll_interval_focused_sec"] == 2.0
+
     async def test_empty_loop_safety(
         self, mock_bus: AsyncMock, mock_store: MagicMock, mock_fetcher: MagicMock
     ) -> None:

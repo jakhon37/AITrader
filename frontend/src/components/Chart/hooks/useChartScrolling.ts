@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../../../api/client';
-import { MAX_BUFFER, PAGINATION_LOOKBACK, isTradingBar } from '../utils';
+import { MAX_BUFFER, PAGINATION_LOOKBACK, filterChartBars } from '../utils';
 
 interface ScrollingHookOptions {
   chart: IChartApi | null;
@@ -49,7 +49,9 @@ export function useChartScrolling({
             const chunkStart = new Date(oldestDate.getTime() - lookbackDays * 86400_000).toISOString();
             const chunkEnd = oldestDate.toISOString();
             const chunk = await getOHLCV(instrument, timeframe, chunkStart, chunkEnd);
-            const filtered = Array.isArray(chunk) ? chunk.filter(isTradingBar).filter((d) => d.time < oldestTime) : [];
+            const replayMode = !!virtualEndTimeRef.current;
+            const filtered = filterChartBars(Array.isArray(chunk) ? chunk : [], { replayMode, instrument })
+              .filter((d) => d.time < oldestTime);
 
             if (filtered.length === 0 && attempt < 3) {
               // Expand window recursively (adding 5 days) to skip weekend/holiday gaps
@@ -123,7 +125,8 @@ export function useChartScrolling({
             return;
           }
 
-          const filteredChunk = newChunk.filter(isTradingBar).filter((d) => d.time > newestTime);
+          const replayMode = !!virtualEndTimeRef.current;
+          const filteredChunk = filterChartBars(newChunk, { replayMode, instrument }).filter((d) => d.time > newestTime);
           if (filteredChunk.length === 0) {
             pag.hasNewerHistory = false;
             return;

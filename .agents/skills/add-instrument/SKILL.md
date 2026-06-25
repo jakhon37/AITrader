@@ -22,41 +22,38 @@ class Instrument(str, Enum):
 
 **This is the only place the instrument name is defined as an enum value.** Every other file uses `Instrument.NEWPAIR` — no string literals.
 
-## Step 2 — Add to config
+## Step 2 — Add to instruments.yaml (trading + activation)
 
 ```yaml
-# config/dev.yaml
+# config/instruments.yaml
 
-instruments:
-  - EURUSD
-  - GBPUSD
-  - USDJPY
-  - XAUUSD
-  - NEWPAIR   # ← add here
+NEWPAIR:
+  enabled: true
+  pip_size: 0.0001
+  lot_size: 100000
+  session_hours: {open: "22:00", close: "22:00"}
+  active_timeframes: [15m, 1h, 4h, 1d]
+  primary_timeframe: 1h
+  fundamental_weight: 0.3
+  technical_weight: 0.7
+  max_position_lots: 1.0
+  news_halt_minutes: 30
+  signal_decay:
+    central_bank: 48
+    economic_data: 4
+    geopolitical: 6
+    market_risk: 2
+    technical_conf: 1
+```
 
-# Add instrument-specific settings
-execution:
-  commission_per_lot:
-    EURUSD: 7.0
-    GBPUSD: 7.0
-    USDJPY: 7.0
-    XAUUSD: 5.0
-    NEWPAIR: 7.0   # ← add with appropriate commission
+Do **not** add a second instrument list to `dev.yaml`. Env YAML (`config/dev.yaml`) holds
+pipeline cadence and model/risk settings only. `enabled: true` here drives D02 scheduler,
+auto-refresh, and the chart UI (`GET /api/data/instruments`).
 
-  pip_size:
-    EURUSD: 0.0001
-    GBPUSD: 0.0001
-    USDJPY: 0.01    # JPY pairs use 2 decimal places
-    XAUUSD: 0.01
-    NEWPAIR: 0.0001  # ← set correct pip size
+## Step 2b — Add Dukascopy feed mapping (if using live Dukascopy data)
 
-data:
-  yfinance_tickers:
-    EURUSD: "EURUSD=X"
-    GBPUSD: "GBPUSD=X"
-    USDJPY: "USDJPY=X"
-    XAUUSD: "GC=F"
-    NEWPAIR: "NEWPAIR=X"  # ← find the correct yfinance ticker
+```python
+# src/data/feeds/dukascopy.py — _SYMBOL_MAP and _DIVISORS
 ```
 
 **Finding the correct yfinance ticker:**
@@ -161,15 +158,11 @@ grep -rn '"NEWPAIR"\|'"'NEWPAIR'" src/ --include="*.py" \
 
 There should be **no string literals** for the instrument name outside of `contracts.py` and config files.
 
-## Step 9 — Add to frontend instrument selector (Division 10)
+## Step 9 — Frontend (Division 10)
 
-```typescript
-// frontend/src/types.ts
-export type Instrument = "EURUSD" | "GBPUSD" | "USDJPY" | "XAUUSD" | "NEWPAIR";
-
-// frontend/src/components/Replay/ReplayPage.tsx
-const INSTRUMENTS: Instrument[] = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "NEWPAIR"];
-```
+The trading terminal loads enabled instruments from `GET /api/data/instruments` automatically
+when `enabled: true` is set in instruments.yaml. Replay pages may still need a local
+update if they hardcode instrument lists.
 
 ## Removing an instrument
 

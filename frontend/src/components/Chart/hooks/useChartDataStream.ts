@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 import { getOHLCV } from '../../../api/client';
-import { LOOKBACK, MAX_BUFFER, applyChartViewport, isTradingBar, type ChartViewportMode } from '../utils';
+import {
+  LOOKBACK,
+  MAX_BUFFER,
+  applyChartViewport,
+  filterChartBars,
+  isTradingBar,
+  type ChartViewportMode,
+} from '../utils';
 import { useChartScrolling } from './useChartScrolling';
 import { useChartWebSocket } from './useChartWebSocket';
 
@@ -25,6 +32,27 @@ const TIMEFRAME_SECONDS: Record<string, number> = {
   '1w': 604800,
 };
 
+const LIVE_GAP_REFETCH_MS: Record<string, number> = {
+  '1m': 60_000,
+  '5m': 120_000,
+  '15m': 180_000,
+};
+const DEFAULT_LIVE_GAP_REFETCH_MS = 180_000;
+
+const MIN_BARS_FOR_LOAD: Record<string, number> = {
+  '1m': 500,
+  '5m': 200,
+  '15m': 150,
+};
+const DEFAULT_MIN_BARS = 100;
+
+function mergeBars(existing: any[], incoming: any[]): any[] {
+  const uniqueMap = new Map<number, any>();
+  for (const item of existing) uniqueMap.set(item.time, item);
+  for (const item of incoming) uniqueMap.set(item.time, item);
+  return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+}
+
 export function useChartDataStream(
   chart: IChartApi | null,
   candleSeries: ISeriesApi<'Candlestick'> | null,
@@ -46,22 +74,92 @@ export function useChartDataStream(
     hasNewerHistory: false,
   });
 
-  // Keep stable refs to the series so updateBar never becomes stale
   const candleSeriesRef = useRef(candleSeries);
   const volumeSeriesRef = useRef(volumeSeries);
+  const chartRef = useRef(chart);
+  const gapRefetchInFlightRef = useRef(false);
+
   useEffect(() => { candleSeriesRef.current = candleSeries; }, [candleSeries]);
   useEffect(() => { volumeSeriesRef.current = volumeSeries; }, [volumeSeries]);
+  useEffect(() => { chartRef.current = chart; }, [chart]);
 
   const [reloadKey, setReloadKey] = useState(0);
   const prevVirtualEndTimeRef = useRef<string | undefined>(virtualEndTime);
   const virtualEndTimeRef = useRef(virtualEndTime);
 
-  // Sync ref with option value
   useEffect(() => {
     virtualEndTimeRef.current = virtualEndTime;
   }, [virtualEndTime]);
 
-  // Watch for mode transitions or manual slider jumps to trigger a reload
+  const isReplayMode = () => virtualEndTimeRef.current !== undefined;
+
+  const shouldFollowLive = useCallback((): boolean => {
+    const c = chartRef.current;
+    if (!c) return true;
+    const range = c.timeScale().getVisibleLogicalRange();
+    if (!range) return true;
+    const lastIdx = dataRef.current.length - 1;
+    return range.to >= lastIdx - 8;
+  }, []);
+
+  const applyBarsToSeries = useCallback((bars: any[], followLive = false) => {
+    const cs = candleSeriesRef.current;
+    const vs = volumeSeriesRef.current;
+    const c = chartRef.current;
+    if (!cs || !vs) return;
+
+    const sanitized = filterChartBars(bars, { instrument });
+    dataRef.current = sanitized;
+    syncBarTimes();
+
+    cs.setData(sanitized.map((d) => ({
+      time: d.time as Time,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+    })));
+    vs.setData(sanitized.map((d) => ({
+      time: d.time as Time,
+      value: d.volume ?? 0,
+      color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)',
+    })));
+
+    if (followLive && c && !isReplayMode()) {
+      applyChartViewport(c, sanitized, timeframe, { mode: viewportMode });
+    }
+  }, [timeframe, viewportMode, instrument]);
+
+  const refetchRecentGap = useCallback(async (fromUnixSec: number, followLive = false) => {
+    if (gapRefetchInFlightRef.current || isReplayMode()) return;
+    gapRefetchInFlightRef.current = true;
+    try {
+      const lookbackDays = LOOKBACK[timeframe] ?? 30;
+      const startMs = Math.min(fromUnixSec * 1000, Date.now() - lookbackDays * 86400_000);
+      const start = new Date(startMs).toISOString();
+      const end = new Date().toISOString();
+      const chunk = await getOHLCV(instrument, timeframe, start, end);
+      const filtered = filterChartBars(Array.isArray(chunk) ? chunk : [], {
+        replayMode: false,
+        instrument,
+      });
+      if (filtered.length === 0) return;
+
+      const merged = mergeBars(dataRef.current, filtered);
+      const finalData =
+        merged.length > MAX_BUFFER ? merged.slice(merged.length - MAX_BUFFER) : merged;
+      if (merged.length > MAX_BUFFER) {
+        paginationRef.current.hasMoreHistory = true;
+      }
+      paginationRef.current.hasNewerHistory = false;
+      applyBarsToSeries(finalData, followLive);
+    } catch (err) {
+      console.error('Error backfilling chart gap:', err);
+    } finally {
+      gapRefetchInFlightRef.current = false;
+    }
+  }, [applyBarsToSeries, instrument, timeframe]);
+
   useEffect(() => {
     const wasDefined = prevVirtualEndTimeRef.current !== undefined;
     const isDefined = virtualEndTime !== undefined;
@@ -73,8 +171,6 @@ export function useChartDataStream(
       const currSec = Math.floor(new Date(virtualEndTime!).getTime() / 1000);
       const diff = currSec - prevSec;
       const timeframeSeconds = TIMEFRAME_SECONDS[timeframe] || 60;
-      // If time went backward, or jumped forward by more than 10 bars or 3 days (e.g. manual slider jump or session restart)
-      // Capping the minimum at 3 days prevents weekend gaps (~2.5 days) from triggering false reload jumps.
       const threshold = Math.max(10 * timeframeSeconds, 3 * 86400);
       if (diff < 0 || diff > threshold) {
         shouldReload = true;
@@ -88,11 +184,9 @@ export function useChartDataStream(
     }
   }, [virtualEndTime, timeframe]);
 
-  // 1. Initial Load & Timeframe Change scroll coordination
   useEffect(() => {
     if (!chart || !candleSeries || !volumeSeries) return;
 
-    // Reset pagination state
     paginationRef.current = {
       isFetching: false,
       hasMoreHistory: true,
@@ -103,6 +197,7 @@ export function useChartDataStream(
     const anchorTime = virtualEndTimeRef.current
       ? Math.floor(new Date(virtualEndTimeRef.current).getTime() / 1000)
       : undefined;
+    const replayMode = isReplayMode();
 
     const fetchWithLookback = (lookbackDays: number, attempt: number) => {
       const endDate = new Date(end);
@@ -110,11 +205,10 @@ export function useChartDataStream(
 
       getOHLCV(instrument, timeframe, start, end)
         .then((data: any[]) => {
-          const filtered = Array.isArray(data) ? data.filter(isTradingBar) : [];
+          const filtered = filterChartBars(Array.isArray(data) ? data : [], { replayMode, instrument });
 
-          if (filtered.length < 100 && attempt < 3) {
-            // No or too few data in this window (e.g. start date is weekend/holiday).
-            // Try again recursively with a larger lookback window (adding 5 days).
+          const minBars = MIN_BARS_FOR_LOAD[timeframe] ?? DEFAULT_MIN_BARS;
+          if (filtered.length < minBars && attempt < 3) {
             fetchWithLookback(lookbackDays + 5, attempt + 1);
             return;
           }
@@ -124,37 +218,37 @@ export function useChartDataStream(
             return;
           }
 
-          // Deduplicate and sort ascending by time
-          const uniqueMap = new Map<number, any>();
-          for (const item of filtered) {
-            uniqueMap.set(item.time, item);
-          }
-          const sortedUnique = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+          const sortedUnique = mergeBars([], filtered);
+          const finalData =
+            sortedUnique.length > MAX_BUFFER
+              ? sortedUnique.slice(sortedUnique.length - MAX_BUFFER)
+              : sortedUnique;
 
           if (sortedUnique.length > MAX_BUFFER) {
-            dataRef.current = sortedUnique.slice(sortedUnique.length - MAX_BUFFER);
             paginationRef.current.hasMoreHistory = true;
-          } else {
-            dataRef.current = sortedUnique;
           }
 
-          syncBarTimes();
-          candleSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, open: d.open, high: d.high, low: d.low, close: d.close })));
-          volumeSeries.setData(dataRef.current.map((d) => ({ time: d.time as Time, value: d.volume ?? 0, color: d.close >= d.open ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)' })));
+          applyBarsToSeries(finalData);
+          applyChartViewport(chart, finalData, timeframe, { mode: viewportMode, anchorTime });
 
-          applyChartViewport(chart, dataRef.current, timeframe, {
-            mode: viewportMode,
-            anchorTime,
-          });
+          if (!replayMode) {
+            const last = finalData[finalData.length - 1];
+            if (last) {
+              const ageSec = Math.floor(Date.now() / 1000) - last.time;
+              const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
+              if (ageSec > tfSec * 2) {
+                void refetchRecentGap(last.time, true);
+              }
+            }
+          }
         })
         .catch(console.error);
     };
 
     const lookbackDays = LOOKBACK[timeframe] ?? 30;
     fetchWithLookback(lookbackDays, 1);
-  }, [chart, candleSeries, volumeSeries, instrument, timeframe, reloadKey]);
+  }, [chart, candleSeries, volumeSeries, instrument, timeframe, reloadKey, applyBarsToSeries, refetchRecentGap, viewportMode]);
 
-  // Re-apply viewport when the user toggles zoom mode without refetching data
   useEffect(() => {
     if (!chart || dataRef.current.length === 0) return;
     const anchorTime = virtualEndTimeRef.current
@@ -163,29 +257,39 @@ export function useChartDataStream(
     applyChartViewport(chart, dataRef.current, timeframe, { mode: viewportMode, anchorTime });
   }, [chart, timeframe, viewportMode]);
 
-  // 2. Active updating bar closure — stable via useCallback + series refs
+  useEffect(() => {
+    if (virtualEndTime) return;
+    const pollMs = LIVE_GAP_REFETCH_MS[timeframe] ?? DEFAULT_LIVE_GAP_REFETCH_MS;
+    const id = window.setInterval(() => {
+      const last = dataRef.current[dataRef.current.length - 1];
+      if (last) void refetchRecentGap(last.time, shouldFollowLive());
+    }, pollMs);
+    return () => window.clearInterval(id);
+  }, [virtualEndTime, timeframe, refetchRecentGap, shouldFollowLive]);
+
   const updateBar = useCallback((bar: any) => {
     const cs = candleSeriesRef.current;
     const vs = volumeSeriesRef.current;
     if (!cs || !vs) return;
-    if (!isTradingBar(bar)) return;
+    if (!isTradingBar(bar, { instrument })) return;
 
-    // Guarantee time is a plain integer Unix seconds (never an object)
     const barTime = typeof bar.time === 'number' ? bar.time : Number(bar.time);
     if (!Number.isFinite(barTime) || barTime <= 0) return;
 
     const pag = paginationRef.current;
+    const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
 
-    // During replay, reject live-scheduler bars that leaked in with timestamps
-    // beyond the simulation clock — they become the series "last" bar and freeze
-    // the price-line indicator.
     if (virtualEndTimeRef.current) {
       const replayEndSec = Math.floor(new Date(virtualEndTimeRef.current).getTime() / 1000);
-      const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
       if (barTime > replayEndSec + tfSec) return;
     }
 
     const lastBar = dataRef.current.length > 0 ? dataRef.current[dataRef.current.length - 1] : null;
+
+    if (!virtualEndTimeRef.current && lastBar && barTime - lastBar.time > tfSec * 2) {
+      void refetchRecentGap(lastBar.time, shouldFollowLive());
+    }
+
     const isUpdateLastOrNew = !lastBar || barTime >= lastBar.time;
 
     const idx = dataRef.current.findIndex((d) => d.time === barTime);
@@ -203,6 +307,7 @@ export function useChartDataStream(
     const lastIdx = dataRef.current.length - 1;
     const touchesLastBar = idx === -1 ? barTime >= (dataRef.current[lastIdx]?.time ?? 0) : idx === lastIdx;
 
+    dataRef.current = filterChartBars(dataRef.current, { instrument });
     const candleData = dataRef.current.map((d) => ({
       time: d.time as Time,
       open: d.open,
@@ -234,9 +339,12 @@ export function useChartDataStream(
         applySetData();
       } catch { /* ignore */ }
     }
-  }, [timeframe]); // timeframe for replay bar-time guard
 
-  // 3. Mount Scroll Pagination Hook
+    if (!virtualEndTimeRef.current && touchesLastBar && shouldFollowLive() && chartRef.current) {
+      applyChartViewport(chartRef.current, dataRef.current, timeframe, { mode: viewportMode });
+    }
+  }, [instrument, timeframe, viewportMode, refetchRecentGap, shouldFollowLive]);
+
   useChartScrolling({
     chart,
     candleSeries,
@@ -249,7 +357,6 @@ export function useChartDataStream(
     paginationRef,
   });
 
-  // 4. Mount WebSocket Feeds Hook
   useChartWebSocket({
     instrument,
     timeframe,

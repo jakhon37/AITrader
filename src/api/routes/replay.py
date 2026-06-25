@@ -331,6 +331,31 @@ async def close_position(request: Request, body: ClosePositionRequest) -> Dict[s
     return {"status": "success", "order": order.model_dump(), "session": session.state.to_dict()}
 
 
+@router.post("/release")
+async def release_replay(request: Request) -> Dict[str, Any]:
+    """Release any active replay session so the terminal live chart can poll again.
+
+    Idempotent: succeeds even when no replay session is running.
+    """
+    existing = getattr(request.app.state, "active_replay_session", None)
+    had_session = existing is not None
+    if existing:
+        try:
+            if hasattr(existing, "stop"):
+                await existing.stop()
+            elif hasattr(existing, "end_session"):
+                await existing.end_session()
+        except Exception as e:
+            logger.warning(f"Error releasing replay session: {e}")
+        request.app.state.active_replay_session = None
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler:
+        scheduler.reset_last_emitted()
+
+    return {"status": "success", "had_session": had_session}
+
+
 @router.post("/stop")
 async def stop_replay(request: Request) -> Dict[str, Any]:
     """Stop the active replay session and return report/scorecard if manual mode."""

@@ -23,9 +23,16 @@ export function useChartWebSocket({
       // and freeze the price-line indicator on a stale value.
       if (virtualEndTimeRef?.current) return;
 
-      const customEvent = e as CustomEvent<{ instrument: string; timeframe: string; bar: any }>;
+      const customEvent = e as CustomEvent<{
+        instrument: string;
+        timeframe: string;
+        source?: string;
+        bar: any;
+      }>;
       const { instrument: barInst, timeframe: barTf, bar } = customEvent.detail;
-      if (barInst.toUpperCase() === instrument.toUpperCase() && barTf === timeframe) {
+      const inst = String(barInst ?? '').toUpperCase();
+      const tf = String(barTf ?? '');
+      if (inst === instrument.toUpperCase() && tf === timeframe) {
         updateBar(bar);
         if (onNewBar) {
           onNewBar(bar);

@@ -9,6 +9,7 @@ import yaml
 from fastapi import APIRouter, Body, HTTPException
 
 from src.core.contracts import Instrument
+from src.core.session import reload_instrument_configs
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -83,4 +84,5 @@ async def update_instrument_config(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write configuration: {e}")
 
+    reload_instrument_configs()
     return {"status": "success", "config": config_data[inst_key]}

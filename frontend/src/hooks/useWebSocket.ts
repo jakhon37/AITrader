@@ -63,11 +63,20 @@ export function useWebSocket() {
                 close: barData.close,
                 volume: barData.volume,
               };
+              const instrument =
+                typeof barData.instrument === 'string'
+                  ? barData.instrument
+                  : String(barData.instrument ?? '');
+              const timeframe =
+                typeof barData.timeframe === 'string'
+                  ? barData.timeframe
+                  : String(barData.timeframe ?? '');
               window.dispatchEvent(
                 new CustomEvent('ohlcv_bar', {
                   detail: {
-                    instrument: barData.instrument,
-                    timeframe: barData.timeframe,
+                    instrument,
+                    timeframe,
+                    source: barData.source ?? 'unknown',
                     bar,
                   },
                 })

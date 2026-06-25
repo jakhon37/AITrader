@@ -2,9 +2,8 @@
 
 Responsibilities
 ----------------
-- In **live mode**: sleep until each candle close (wall-clock), fetch the
-  completed bar from yfinance, validate it, and publish an OHLCVBar onto
-  BusChannel.OHLCV_BAR.
+- In **live mode**: poll Dukascopy for completed and active bars, validate,
+  persist, and publish OHLCVBar events onto BusChannel.OHLCV_BAR.
 - In **replay mode**: on every ``tick()`` call, check whether the virtual
   clock has crossed one or more candle boundaries; if so, fetch/construct
   the bar from the DataStore and publish.  No wall-clock sleep in replay.
@@ -34,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional, TypedDict
 
 import pandas as pd
 
@@ -49,10 +48,24 @@ from src.core.contracts import (
 from src.core.exceptions import DataError
 from src.core.ids import new_signal_id
 from src.core.logging import get_logger
+from src.data.feeds.base import OHLCVFeed
+from src.data.feeds.dukascopy import DukascopyFeed
+from src.core.poll_schedule import compute_live_poll_interval, m1_cache_ttl_sec
+from src.core.session import pip_size_for
 from src.data.store import DataStore
-from src.data.validation import validate_ohlcv, normalize_ohlcv_columns
 
 _log = get_logger("D02-DATA")
+
+FOCUSED_POLL_INTERVAL_SEC = 2.0
+BACKGROUND_POLL_INTERVAL_SEC = 10.0
+
+
+class PairLiveStatus(TypedDict, total=False):
+    last_bar_at: str
+    close: float
+    source: str
+    last_error: str
+    last_poll_at: str
 
 
 # ── Timeframe helpers ─────────────────────────────────────────────────────────
@@ -85,124 +98,48 @@ def _next_candle_close(dt: datetime, timeframe: Timeframe) -> datetime:
     return open_time + _TF_DURATION[timeframe]
 
 
+def _normalize_wick(bar: OHLCVBar) -> OHLCVBar:
+    """Ensure open/close sit inside [low, high] for chart libraries."""
+    low = min(bar.open, bar.high, bar.low, bar.close)
+    high = max(bar.open, bar.high, bar.low, bar.close)
+    if high == low:
+        pip = pip_size_for(bar.instrument)
+        high = bar.close + pip / 2
+        low = bar.close - pip / 2
+    return bar.model_copy(update={"high": high, "low": low})
+
+
 # ── Fetcher protocol ──────────────────────────────────────────────────────────
 
+def create_ohlcv_feed(source: str = "dukascopy") -> OHLCVFeed:
+    """Factory for the configured OHLCV feed."""
+    if source == "dukascopy":
+        return DukascopyFeed()
+    raise DataError(f"Unsupported data source: {source!r}. Use 'dukascopy'.")
+
+
 class OHLCVFetcher:
-    """Thin wrapper around LiveDataFetcher producing single OHLCVBar objects.
+    """Backward-compatible wrapper around OHLCVFeed for scheduler and tests."""
 
-    In production this wraps LiveDataFetcher (yfinance).
-    In tests it can be replaced with a stub.
-    """
-
-    # yfinance symbol mapping (matches LiveDataFetcher.SYMBOL_MAP)
-    _SYMBOL_MAP: Dict[Instrument, str] = {
-        Instrument.EURUSD: "EURUSD=X",
-        Instrument.GBPUSD: "GBPUSD=X",
-        Instrument.USDJPY: "USDJPY=X",
-        Instrument.XAUUSD: "GC=F",
-    }
-
-    def __init__(self) -> None:
-        try:
-            import yfinance as yf
-            self._yf = yf
-        except ImportError:
-            raise DataError(
-                "yfinance is not installed. "
-                "Install with: pip install yfinance"
-            )
+    def __init__(self, feed: Optional[OHLCVFeed] = None, source: str = "dukascopy") -> None:
+        self._feed = feed or create_ohlcv_feed(source)
 
     def fetch_live_bars(
         self,
         instrument: Instrument,
         timeframe: Timeframe,
     ) -> tuple[OHLCVBar, Optional[OHLCVBar]]:
-        """Fetch both the last completed bar and the current active (incomplete) bar.
-
-        Returns:
-            (completed_bar, active_bar)
-        """
-        ticker_sym = self._SYMBOL_MAP.get(instrument)
-        if ticker_sym is None:
-            raise DataError(f"No yfinance symbol mapping for {instrument.value}")
-
-        # Map Timeframe to yfinance interval
-        _TF_TO_YF: Dict[Timeframe, str] = {
-            Timeframe.M1:  "1m",
-            Timeframe.M5:  "5m",
-            Timeframe.M15: "15m",
-            Timeframe.M30: "30m",
-            Timeframe.H1:  "1h",
-            Timeframe.H4:  "1h",   # resample from 1h
-            Timeframe.D1:  "1d",
-            Timeframe.W1:  "1wk",
-        }
-        yf_interval = _TF_TO_YF[timeframe]
-
-        # Fetch the last 3 bars (enough to always have one complete closed bar + active bar)
-        try:
-            ticker = self._yf.Ticker(ticker_sym)
-            df = ticker.history(period="1d", interval=yf_interval)
-        except Exception as exc:
-            raise DataError(
-                f"yfinance fetch failed for {instrument.value} ({ticker_sym}): {exc}"
-            ) from exc
-
-        if df.empty:
-            raise DataError(
-                f"yfinance returned empty data for {instrument.value} at {timeframe.value}. "
-                "Market may be closed or symbol unavailable."
-            )
-
-        # Lowercase columns
-        df.columns = [c.lower() for c in df.columns]
-        required = {"open", "high", "low", "close"}
-        if not required.issubset(set(df.columns)):
-            raise DataError(
-                f"yfinance response missing OHLC columns for {instrument.value}. "
-                f"Got: {list(df.columns)}"
-            )
-
-        # If we have at least 2 bars, iloc[-2] is completed, iloc[-1] is active
-        # If we only have 1 bar, it is treated as completed (no active bar yet)
-        if len(df) >= 2:
-            comp_idx = -2
-            act_idx = -1
-        else:
-            comp_idx = -1
-            act_idx = None
-
-        def _make_bar_from_row(idx: int, is_active: bool) -> OHLCVBar:
-            row = df.iloc[idx]
-            bar_ts = df.index[idx]
-            if hasattr(bar_ts, "tzinfo") and bar_ts.tzinfo is None:
-                bar_ts = bar_ts.tz_localize("UTC")
-            bar_ts_dt = pd.Timestamp(bar_ts).tz_convert("UTC").to_pydatetime()
-            volume = float(row.get("volume", 0.0) or 0.0)
-            return OHLCVBar(
-                signal_id=new_signal_id(),
-                instrument=instrument,
-                timeframe=timeframe,
-                timestamp=bar_ts_dt,
-                open=float(row["open"]),
-                high=float(row["high"]),
-                low=float(row["low"]),
-                close=float(row["close"]),
-                volume=volume,
-                source="yfinance" if not is_active else "yfinance_active",
-            )
-
-        completed_bar = _make_bar_from_row(comp_idx, is_active=False)
-        active_bar = _make_bar_from_row(act_idx, is_active=True) if act_idx is not None else None
-
-        return completed_bar, active_bar
+        completed, active = self._feed.fetch_live_bars(instrument, timeframe)
+        completed = _normalize_wick(completed)
+        if active is not None:
+            active = _normalize_wick(active)
+        return completed, active
 
     def fetch_latest_bar(
         self,
         instrument: Instrument,
         timeframe: Timeframe,
     ) -> OHLCVBar:
-        """Fetch the most recently closed bar for instrument/timeframe."""
         completed_bar, _ = self.fetch_live_bars(instrument, timeframe)
         return completed_bar
 
@@ -215,8 +152,8 @@ class DataScheduler:
     Live mode
     ---------
     ``run()`` starts an asyncio loop that:
-    1. Polling Yahoo Finance API every 5 seconds for registered active pairs.
-    2. Broadcasts active ticking candles to WebSockets in real time.
+    1. Polls Dukascopy for registered active pairs (faster for focused chart).
+    2. Broadcasts active candles to WebSockets in real time.
     3. Detects completed candle transitions, writes completed bars to Parquet, and publishes.
 
     Replay mode
@@ -246,12 +183,19 @@ class DataScheduler:
         store: DataStore,
         clock: VirtualClock,
         fetcher: Optional[OHLCVFetcher] = None,
+        feed: Optional[OHLCVFeed] = None,
+        data_source: str = "dukascopy",
         active_pairs: Optional[list[tuple[Instrument, Timeframe]]] = None,
+        focused_poll_interval_sec: float = FOCUSED_POLL_INTERVAL_SEC,
+        background_poll_interval_sec: float = BACKGROUND_POLL_INTERVAL_SEC,
+        m1_poll_interval_sec: float = 60.0,
+        live_poll_adaptive: bool = True,
     ) -> None:
         self._bus = bus
         self._store = store
         self._clock = clock
-        self._fetcher = fetcher or OHLCVFetcher()
+        self._fetcher = fetcher or OHLCVFetcher(feed=feed, source=data_source)
+        self._m1_poll_interval_sec = m1_poll_interval_sec
         self._active_pairs: list[tuple[Instrument, Timeframe]] = (
             active_pairs if active_pairs is not None else [
                 (Instrument.EURUSD, Timeframe.H1),
@@ -260,9 +204,16 @@ class DataScheduler:
                 (Instrument.XAUUSD, Timeframe.H1),
             ]
         )
+        self._focused_pair: Optional[tuple[Instrument, Timeframe]] = None
+        self._focused_poll_interval_sec = focused_poll_interval_sec
+        self._background_poll_interval_sec = background_poll_interval_sec
+        self._live_poll_adaptive = live_poll_adaptive
         self._running = False
         # Track the last emitted candle open time per (instrument, timeframe)
         self._last_emitted: dict[tuple[Instrument, Timeframe], datetime] = {}
+        self._pair_status: dict[str, PairLiveStatus] = {}
+        self._last_global_error: Optional[str] = None
+        self._last_global_poll_at: Optional[datetime] = None
 
     # ── Live mode ─────────────────────────────────────────────────────────────
 
@@ -279,55 +230,261 @@ class DataScheduler:
             self._running = False
             _log.info("scheduler_stopped")
 
+    def _poll_interval_for(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+        now: Optional[datetime] = None,
+    ) -> float:
+        pair = (instrument, timeframe)
+        focused = pair == self._focused_pair
+        if self._live_poll_adaptive:
+            now = now or datetime.now(timezone.utc)
+            return compute_live_poll_interval(
+                timeframe,
+                now,
+                focused=focused,
+                background_multiplier=max(
+                    2.0,
+                    self._background_poll_interval_sec / max(self._focused_poll_interval_sec, 1.0),
+                ),
+            )
+        if focused:
+            if timeframe == Timeframe.M1:
+                return self._m1_poll_interval_sec
+            return self._focused_poll_interval_sec
+        return self._background_poll_interval_sec
+
     async def _live_loop(self) -> None:
-        """Inner loop: poll active candles, publish updates, repeat."""
+        """Inner loop: one M1 fetch per instrument, derive all due timeframes."""
+        last_poll: dict[tuple[Instrument, Timeframe], float] = {}
+        loop = asyncio.get_running_loop()
+
         while self._running:
             if not self._active_pairs:
                 await asyncio.sleep(1.0)
                 continue
 
+            now_mono = loop.time()
+            now_utc = datetime.now(timezone.utc)
+            due_by_instrument: dict[Instrument, list[Timeframe]] = {}
+            next_wake_sec = 30.0
+
             for instrument, timeframe in list(self._active_pairs):
                 if not self._running:
                     break
+                pair = (instrument, timeframe)
+                interval = self._poll_interval_for(instrument, timeframe, now_utc)
+                elapsed = now_mono - last_poll.get(pair, 0.0)
+                if elapsed < interval:
+                    next_wake_sec = min(next_wake_sec, max(1.0, interval - elapsed))
+                    continue
+                last_poll[pair] = now_mono
+                due_by_instrument.setdefault(instrument, []).append(timeframe)
 
-                try:
-                    # Support both standard fetcher and test mock/stubs
-                    if hasattr(self._fetcher, "fetch_live_bars"):
-                        completed_bar, active_bar = self._fetcher.fetch_live_bars(instrument, timeframe)
-                    else:
-                        completed_bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
-                        active_bar = None
+            if due_by_instrument:
+                self._last_global_poll_at = now_utc
+                for instrument, timeframes in due_by_instrument.items():
+                    await self._poll_instrument(instrument, timeframes)
 
-                    # 1. Check if completed_bar is new and needs emission/storage
-                    last = self._last_emitted.get((instrument, timeframe))
-                    if last is None or completed_bar.timestamp > last:
-                        # Avoid duplicate writes
-                        self._save_to_store(instrument, timeframe, completed_bar)
-                        await self._bus.publish(BusChannel.OHLCV_BAR, completed_bar)
-                        self._last_emitted[(instrument, timeframe)] = completed_bar.timestamp
-                        _log.info(
-                            "ohlcv_bar_published",
-                            instrument=instrument.value,
-                            timeframe=timeframe.value,
-                            bar_ts=str(completed_bar.timestamp),
-                            close=completed_bar.close,
-                        )
+            await asyncio.sleep(max(1.0, min(next_wake_sec, 30.0)))
 
-                    # 2. Publish active ticking bar (incomplete bar, don't store)
-                    if active_bar is not None and active_bar.timestamp > completed_bar.timestamp:
-                        # Ensure we don't treat it as completed
-                        await self._bus.publish(BusChannel.OHLCV_BAR, active_bar)
+    async def _poll_instrument(
+        self,
+        instrument: Instrument,
+        timeframes: list[Timeframe],
+    ) -> None:
+        """Fetch one M1 window and derive live bars for all due timeframes."""
+        poll_at = datetime.now(timezone.utc)
+        feed = getattr(self._fetcher, "_feed", None)
+        m1_df: Optional[pd.DataFrame] = None
 
-                except Exception as exc:
-                    _log.error(
-                        "scheduler_live_poll_failed",
-                        instrument=instrument.value,
-                        timeframe=timeframe.value,
-                        error=str(exc),
-                    )
+        if isinstance(feed, DukascopyFeed):
+            try:
+                min_interval = min(
+                    self._poll_interval_for(instrument, tf, poll_at) for tf in timeframes
+                )
+                cache_ttl = m1_cache_ttl_sec(min_interval)
+                executor = asyncio.get_running_loop()
+                m1_df = await executor.run_in_executor(
+                    None,
+                    lambda: feed.fetch_m1_recent(
+                        instrument, max_cache_age_sec=cache_ttl
+                    ),
+                )
+            except Exception as exc:
+                _log.warning(
+                    "scheduler_m1_batch_fetch_failed",
+                    instrument=instrument.value,
+                    error=str(exc),
+                )
 
-            # Sleep short duration for high-frequency spot ticking
-            await asyncio.sleep(5.0)
+        for timeframe in timeframes:
+            await self._poll_pair(
+                instrument,
+                timeframe,
+                poll_at=poll_at,
+                m1_df=m1_df,
+            )
+
+    async def _poll_pair(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+        *,
+        poll_at: Optional[datetime] = None,
+        m1_df: Optional[pd.DataFrame] = None,
+    ) -> None:
+        """Fetch and publish bars for a single instrument/timeframe pair."""
+        pair_key = self._pair_key(instrument, timeframe)
+        poll_at = poll_at or datetime.now(timezone.utc)
+
+        try:
+            feed = getattr(self._fetcher, "_feed", None)
+            if (
+                m1_df is not None
+                and not m1_df.empty
+                and isinstance(feed, DukascopyFeed)
+            ):
+                completed_bar, active_bar = feed.live_bars_from_m1(
+                    instrument, timeframe, m1_df
+                )
+                completed_bar = _normalize_wick(completed_bar)
+                if active_bar is not None:
+                    active_bar = _normalize_wick(active_bar)
+            elif hasattr(self._fetcher, "fetch_live_bars"):
+                completed_bar, active_bar = self._fetcher.fetch_live_bars(
+                    instrument, timeframe
+                )
+            else:
+                completed_bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
+                active_bar = None
+
+            await self._emit_bars(
+                instrument, timeframe, completed_bar, active_bar, poll_at
+            )
+
+        except Exception as exc:
+            try:
+                completed_bar, active_bar = self._bars_from_store(instrument, timeframe)
+            except Exception:
+                err = str(exc)
+                _log.error(
+                    "scheduler_live_poll_failed",
+                    instrument=instrument.value,
+                    timeframe=timeframe.value,
+                    error=err,
+                )
+                status = self._pair_status.setdefault(pair_key, {})
+                status["last_poll_at"] = poll_at.isoformat()
+                status["last_error"] = err
+                self._last_global_error = err
+                return
+
+            _log.warning(
+                "scheduler_live_poll_store_fallback",
+                instrument=instrument.value,
+                timeframe=timeframe.value,
+                error=str(exc),
+            )
+            await self._emit_bars(
+                instrument,
+                timeframe,
+                completed_bar,
+                active_bar,
+                poll_at,
+                persist_completed=False,
+            )
+
+    async def _emit_bars(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+        completed_bar: OHLCVBar,
+        active_bar: Optional[OHLCVBar],
+        poll_at: datetime,
+        *,
+        persist_completed: bool = True,
+    ) -> None:
+        """Publish bars and update pair status."""
+        pair_key = self._pair_key(instrument, timeframe)
+        last = self._last_emitted.get((instrument, timeframe))
+        if last is None or completed_bar.timestamp > last:
+            # Only persist M1 from live poll; higher TFs come from resample.
+            if persist_completed and timeframe == Timeframe.M1:
+                self._save_to_store(instrument, timeframe, completed_bar)
+            await self._bus.publish(BusChannel.OHLCV_BAR, completed_bar)
+            self._last_emitted[(instrument, timeframe)] = completed_bar.timestamp
+            _log.info(
+                "ohlcv_bar_published",
+                instrument=instrument.value,
+                timeframe=timeframe.value,
+                bar_ts=str(completed_bar.timestamp),
+                close=completed_bar.close,
+            )
+
+        latest_bar = completed_bar
+        if active_bar is not None and active_bar.timestamp > completed_bar.timestamp:
+            await self._bus.publish(BusChannel.OHLCV_BAR, active_bar)
+            latest_bar = active_bar
+
+        status = self._pair_status.setdefault(pair_key, {})
+        status["last_poll_at"] = poll_at.isoformat()
+        status["last_bar_at"] = latest_bar.timestamp.isoformat()
+        status["close"] = latest_bar.close
+        status["source"] = latest_bar.source
+        status.pop("last_error", None)
+        self._last_global_error = None
+
+    def _bars_from_store(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+    ) -> tuple[OHLCVBar, Optional[OHLCVBar]]:
+        """Read the latest completed/active bars from Parquet when Dukascopy is busy."""
+        now = datetime.now(timezone.utc)
+        dur = _TF_DURATION[timeframe]
+        candle_open = _candle_open_time(now, timeframe)
+        df = self._store.get_ohlcv(
+            instrument,
+            timeframe,
+            candle_open - dur * 5,
+            now,
+        )
+        if df.empty:
+            raise DataError(f"No stored bars for {instrument.value}/{timeframe.value}")
+
+        def _row_to_bar(ts: datetime, row: pd.Series, source: str) -> OHLCVBar:
+            return OHLCVBar(
+                signal_id=new_signal_id(),
+                instrument=instrument,
+                timeframe=timeframe,
+                timestamp=ts,
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=float(row.get("volume", 0.0) or 0.0),
+                source=source,
+            )
+
+        active_bar: Optional[OHLCVBar] = None
+        completed_bar: Optional[OHLCVBar] = None
+        if candle_open in df.index:
+            active_bar = _row_to_bar(candle_open, df.loc[candle_open], "store_active")
+            prior = df.loc[: candle_open - timedelta(microseconds=1)]
+            if not prior.empty:
+                ts = prior.index[-1].to_pydatetime()
+                completed_bar = _row_to_bar(ts, prior.iloc[-1], "store")
+        else:
+            ts = df.index[-1].to_pydatetime()
+            completed_bar = _row_to_bar(ts, df.iloc[-1], "store")
+
+        if completed_bar is None:
+            raise DataError(f"No completed bar in store for {instrument.value}/{timeframe.value}")
+        return _normalize_wick(completed_bar), (
+            _normalize_wick(active_bar) if active_bar is not None else None
+        )
 
     def _save_to_store(
         self,
@@ -335,8 +492,38 @@ class DataScheduler:
         timeframe: Timeframe,
         bar: OHLCVBar,
     ) -> None:
-        """Store bar in DataStore."""
+        """Store bar in DataStore without downgrading existing wicks."""
         try:
+            bar = _normalize_wick(bar)
+            dur = _TF_DURATION[timeframe]
+            try:
+                existing = self._store.get_ohlcv(
+                    instrument,
+                    timeframe,
+                    bar.timestamp,
+                    bar.timestamp + dur - timedelta(microseconds=1),
+                )
+            except DataError:
+                existing = pd.DataFrame()
+
+            if not existing.empty:
+                row = existing.iloc[-1]
+                old_spread = float(row["high"]) - float(row["low"])
+                new_spread = bar.high - bar.low
+                if new_spread <= 0 and old_spread > 0:
+                    return
+                if old_spread > 0 or new_spread > 0:
+                    bar = bar.model_copy(
+                        update={
+                            "open": float(row["open"]),
+                            "high": max(bar.high, float(row["high"])),
+                            "low": min(bar.low, float(row["low"])),
+                            "close": bar.close,
+                            "volume": max(bar.volume, float(row.get("volume", 0.0) or 0.0)),
+                        }
+                    )
+                    bar = _normalize_wick(bar)
+
             row_df = pd.DataFrame(
                 {
                     "open": [bar.open],
@@ -482,6 +669,64 @@ class DataScheduler:
                 timeframe=timeframe.value,
             )
 
+    def set_focused_pair(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+    ) -> None:
+        """Mark the chart's active pair for faster polling."""
+        pair = (instrument, timeframe)
+        self.add_active_pair(instrument, timeframe)
+        self._focused_pair = pair
+        _log.info(
+            "scheduler_pair_focused",
+            instrument=instrument.value,
+            timeframe=timeframe.value,
+        )
+
+    def get_live_status(self) -> dict[str, Any]:
+        """Return scheduler health for the terminal live-chart status UI."""
+        focused: Optional[dict[str, str]] = None
+        focused_poll_interval_sec: Optional[float] = None
+        if self._focused_pair is not None:
+            inst, tf = self._focused_pair
+            focused = {"instrument": inst.value, "timeframe": tf.value}
+            focused_poll_interval_sec = self._poll_interval_for(inst, tf)
+
+        return {
+            "running": self._running,
+            "focused_pair": focused,
+            "focused_poll_interval_sec": focused_poll_interval_sec,
+            "active_pairs": [
+                {"instrument": i.value, "timeframe": tf.value}
+                for i, tf in self._active_pairs
+            ],
+            "data_source": getattr(
+                getattr(self._fetcher, "_feed", self._fetcher),
+                "source_name",
+                "dukascopy",
+            ),
+            "live_poll_adaptive": self._live_poll_adaptive,
+            "poll_interval_focused_sec": self._focused_poll_interval_sec,
+            "poll_interval_background_sec": self._background_poll_interval_sec,
+            "poll_interval_m1_sec": self._m1_poll_interval_sec,
+            "last_poll_at": (
+                self._last_global_poll_at.isoformat()
+                if self._last_global_poll_at is not None
+                else None
+            ),
+            "last_error": self._last_global_error,
+            "pairs": dict(self._pair_status),
+        }
+
+    @staticmethod
+    def _pair_key(instrument: Instrument, timeframe: Timeframe) -> str:
+        return f"{instrument.value}/{timeframe.value}"
+
     @property
     def active_pairs(self) -> list[tuple[Instrument, Timeframe]]:
         return list(self._active_pairs)
+
+    @property
+    def focused_pair(self) -> Optional[tuple[Instrument, Timeframe]]:
+        return self._focused_pair

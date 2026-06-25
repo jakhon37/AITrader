@@ -11,6 +11,7 @@ import pandas as pd
 from src.core.contracts import Instrument, Timeframe
 from src.core.exceptions import DataError
 from src.core.logging import get_logger
+from src.data.pipeline.merge import merge_ohlcv_without_downgrade
 
 _log = get_logger("D02-DATA")
 
@@ -85,8 +86,9 @@ class OHLCVMixin:
         if "volume" not in df.columns:
             df["volume"] = 0.0
 
-        months = df.groupby(df.index.to_period("M"))
-        for period, chunk in months:
+        df["_partition_month"] = df.index.strftime("%Y-%m")
+        for _month_key, chunk in df.groupby("_partition_month"):
+            chunk = chunk.drop(columns=["_partition_month"])
             # Use the first timestamp of the chunk to build the path
             sample_dt = chunk.index[0].to_pydatetime()
             path = _parquet_path(self._base, instrument, timeframe, sample_dt)
@@ -97,10 +99,10 @@ class OHLCVMixin:
                 if path.exists():
                     existing = pd.read_parquet(path)
                     existing.index = pd.to_datetime(existing.index, utc=True)
-                    combined = pd.concat([existing, chunk[["open", "high", "low", "close", "volume"]]])
-                    # Drop duplicates keeping the latest write (last wins)
-                    combined = combined[~combined.index.duplicated(keep="last")]
-                    combined.sort_index(inplace=True)
+                    combined = merge_ohlcv_without_downgrade(
+                        existing,
+                        chunk[["open", "high", "low", "close", "volume"]],
+                    )
                     combined.to_parquet(tmp_path)
                 else:
                     chunk[["open", "high", "low", "close", "volume"]].to_parquet(tmp_path)

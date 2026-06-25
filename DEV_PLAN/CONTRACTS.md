@@ -360,6 +360,7 @@ Use this helper everywhere. Never inline str(uuid.uuid4()).
 
 ```yaml
 EURUSD:
+  enabled: true          # D02 scheduler + refresh + chart UI
   pip_size: 0.0001
   lot_size: 100000
   session_hours: {open: "22:00", close: "22:00"}  # UTC Sun open / Fri close
@@ -375,7 +376,20 @@ EURUSD:
     geopolitical: 6
     market_risk: 2
     technical_conf: 1
+
+XAUUSD:
+  enabled: true
+  session_hours: {open: "22:00", close: "21:00"}
+  daily_break: {start: "21:00", end: "22:00"}   # optional intraday pause
+  # ... pip_size, weights, etc.
 ```
+
+**Config split (do not duplicate instrument lists):**
+| File | Purpose |
+|------|---------|
+| `src/core/contracts.py` | `Instrument` enum — compile-time identity |
+| `config/instruments.yaml` | Per-instrument trading + `enabled` + session rules |
+| `config/{env}.yaml` | Deployment knobs (pipeline cadence, model, risk) — no per-pair trading params |
 
 ---
 

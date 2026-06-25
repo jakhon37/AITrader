@@ -13,6 +13,15 @@ Fetch, validate, store, serve — nothing else.
 ## Dependencies
 - D01-CORE: contracts, bus, clock, config, logging
 
+## Instrument activation
+Which pairs the scheduler polls, auto-refresh backfills, and the chart UI lists comes from
+`enabled: true` on each block in `config/instruments.yaml` (via `get_enabled_instruments()`).
+Do **not** maintain a second instrument list in `dev.yaml` — env YAML holds pipeline cadence
+(`data.pipeline.*`) only.
+
+Session hours and gold `daily_break` in instruments.yaml drive chart bar filtering via
+`src/core/session.py` (loaded through `load_instruments()`).
+
 ---
 
 ## Emits

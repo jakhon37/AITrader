@@ -1,18 +1,31 @@
 env: dev
 
 data:
-  # First symbol is used as default for training scripts
+  # Legacy training-script symbol list (fallback when instruments.yaml unavailable).
+  # Enabled instruments + trading params: config/instruments.yaml
   symbols:
-    - GOLD
-    - BTC_USD
     - EUR_USD
     - GBP_USD
     - USD_JPY
+    - XAUUSD
   lookback_days: 365
   data_dir: data
   data_version: null
   # Supported timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo
   timeframe: "1m"
+  source: dukascopy
+  pipeline:
+    tail_days: 14
+    full_lookback_days: 1825
+    live_poll_adaptive: true
+    live_poll_sec_m1: 60
+    live_poll_sec_focused: 2.0
+    live_poll_sec_background: 10.0
+    auto_refresh: true
+    tail_refresh_interval_sec: 3600
+    tail_resample_slow_interval_sec: 86400
+    live_m1_cache_ttl_sec: 30.0
+    dukascopy_tick_enabled: true
 
 model:
   checkpoint_dir: checkpoints

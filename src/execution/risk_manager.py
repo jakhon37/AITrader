@@ -10,6 +10,7 @@ from typing import Optional, Set
 from src.core.clock import now
 from src.core.config import InstrumentConfig, RiskConfig
 from src.core.contracts import Instrument, PortfolioState, TradeSignal
+from src.core.session import is_fx_session_open
 
 logger = logging.getLogger(__name__)
 
@@ -66,24 +67,11 @@ class RiskManager:
         )
 
     def is_market_open(self, dt: datetime) -> bool:
-        """Check if Forex/Gold markets are open.
-
-        Forex/Gold is generally closed from Friday 22:00 UTC to Sunday 22:00 UTC.
-        """
+        """Check if Forex/Gold markets are open (UTC session from instruments.yaml)."""
         if self.env != "prod":
             return True
 
-        weekday = dt.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
-        hour = dt.hour
-
-        if weekday == 4 and hour >= 22:  # Friday post-22:00 UTC
-            return False
-        if weekday == 5:  # Saturday
-            return False
-        if weekday == 6 and hour < 22:  # Sunday pre-22:00 UTC
-            return False
-
-        return True
+        return is_fx_session_open(dt)
 
     def validate(
         self,

@@ -1,12 +1,14 @@
-# AITrader — Per-instrument trading configuration
-# All divisions load this via src.core.config.load_instruments()
-# See CONTRACTS.md for the full field reference.
+# AITrader — Per-instrument trading configuration (single source of truth)
+# All divisions load via src.core.config.load_instruments()
+# enabled: drives D02 scheduler, auto-refresh, chart UI (GET /api/data/instruments)
+# See DEV_PLAN/CONTRACTS.md for the full field reference.
 #
 # session_hours: UTC Sun open / Fri close (22:00 → 22:00 covers entire FX week)
 # news_halt_minutes: minutes before AND after a high-impact event where no new orders are placed
 # signal_decay: hours until a FundamentalSignal from each event type expires (D05 discards after)
 
 EURUSD:
+  enabled: true
   pip_size: 0.0001
   lot_size: 100000
   session_hours:
@@ -26,6 +28,7 @@ EURUSD:
     technical_conf: 1
 
 GBPUSD:
+  enabled: true
   pip_size: 0.0001
   lot_size: 100000
   session_hours:
@@ -45,6 +48,7 @@ GBPUSD:
     technical_conf: 1
 
 USDJPY:
+  enabled: true
   pip_size: 0.01
   lot_size: 100000
   session_hours:
@@ -64,11 +68,15 @@ USDJPY:
     technical_conf: 1
 
 XAUUSD:
+  enabled: true
   pip_size: 0.01
   lot_size: 100          # 1 lot = 100 oz
   session_hours:
-    open: "22:00"
-    close: "21:59"       # Gold follows commodities session; close slightly before FX weekly close
+    open: "22:00"        # UTC Sun open / daily reopen after maintenance
+    close: "21:00"       # UTC daily close (Dukascopy gold)
+  daily_break:
+    start: "21:00"       # UTC 1h maintenance pause before reopen at 22:00
+    end: "22:00"
   active_timeframes: ["15m", "1h", "4h", "1d"]
   primary_timeframe: "1h"
   fundamental_weight: 0.5   # Gold is more macro-driven than FX pairs

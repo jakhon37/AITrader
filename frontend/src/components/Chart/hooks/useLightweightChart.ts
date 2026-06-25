@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChartTimezoneFormatters } from '../../../utils/chartTimezone';
 
-export function useLightweightChart(containerRef: RefObject<HTMLDivElement | null>) {
+export function useLightweightChart(
+  containerRef: RefObject<HTMLDivElement | null>,
+  timezone: string,
+) {
   const [chartState, setChartState] = useState<{
     chart: IChartApi | null;
     candleSeries: ISeriesApi<'Candlestick'> | null;
@@ -12,6 +16,8 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
 
   useEffect(() => {
     if (!containerRef.current) return;
+
+    const { timeFormatter, tickMarkFormatter } = createChartTimezoneFormatters(timezone);
 
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth || 1,
@@ -23,7 +29,12 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
         horzLines: { color: 'rgba(255,255,255,0.03)' },
       },
       crosshair: { mode: 1 },
-      timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true },
+      localization: { timeFormatter },
+      timeScale: {
+        borderColor: 'rgba(255,255,255,0.08)',
+        timeVisible: true,
+        tickMarkFormatter,
+      },
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -48,6 +59,17 @@ export function useLightweightChart(containerRef: RefObject<HTMLDivElement | nul
       setChartState({ chart: null, candleSeries: null, volumeSeries: null });
     };
   }, [containerRef]);
+
+  const { chart } = chartState;
+
+  useEffect(() => {
+    if (!chart) return;
+    const { timeFormatter, tickMarkFormatter } = createChartTimezoneFormatters(timezone);
+    chart.applyOptions({
+      localization: { timeFormatter },
+      timeScale: { tickMarkFormatter },
+    });
+  }, [chart, timezone]);
 
   return chartState;
 }

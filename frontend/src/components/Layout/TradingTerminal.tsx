@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Header } from './Header';
 import { CandleChart } from '../Chart/CandleChart';
+import { ChartTimezoneSelector } from '../Chart/ChartTimezoneSelector';
 import { ChartViewportToggle } from '../Chart/ChartViewportToggle';
+import { useChartTimezone } from '../../hooks/useChartTimezone';
 import type { ChartViewportMode } from '../Chart/utils';
 import { IndicatorPanel } from '../Chart/IndicatorPanel';
 import { FusionPanel } from '../Panels/FusionPanel';
@@ -9,7 +11,10 @@ import { NewsFeed } from '../Panels/NewsFeed';
 import { Portfolio } from '../Panels/Portfolio';
 import { SignalLog } from '../Panels/SignalLog';
 import { ConfigEditor } from '../Panels/ConfigEditor';
+import { getDataInstruments, releaseReplaySession } from '../../api/client';
+import { useLiveChartStatus } from '../../hooks/useLiveChartStatus';
 import { usePortfolio } from '../../hooks/usePortfolio';
+import { LiveChartStatus } from './LiveChartStatus';
 import { useSignalsStore } from '../../store/signals';
 import { ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 
@@ -18,6 +23,7 @@ interface TradingTerminalProps {
 }
 
 export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
+  const [enabledInstruments, setEnabledInstruments] = useState<string[]>([]);
   const [instrument, setInstrument] = useState('EURUSD');
   const [timeframe, setTimeframe] = useState('1h');
   const [chartViewportMode, setChartViewportMode] = useState<ChartViewportMode>(() => {
@@ -25,7 +31,29 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
     return saved === 'fit-all' ? 'fit-all' : 'auto';
   });
   const connected = useSignalsStore((state) => state.wsConnected);
+  const { timezone, setTimezone, displayLabel } = useChartTimezone();
+  const liveStatus = useLiveChartStatus(instrument, timeframe, connected);
   usePortfolio();
+
+  useEffect(() => {
+    releaseReplaySession().catch(() => {
+      /* non-fatal: terminal still works if release fails */
+    });
+  }, []);
+
+  useEffect(() => {
+    getDataInstruments()
+      .then((data) => {
+        const list = data.enabled?.length ? data.enabled : data.supported;
+        setEnabledInstruments(list);
+        if (list.length && !list.includes(instrument)) {
+          setInstrument(list[0]);
+        }
+      })
+      .catch(() => {
+        /* Header falls back to default instrument list */
+      });
+  }, []);
 
   const [rightHidden, setRightHidden] = useState(() => {
     return localStorage.getItem('terminal_right_hidden') === 'true';
@@ -204,6 +232,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   return (
     <div style={{ display: 'grid', gridTemplateRows: '56px 1fr', height: '100%', overflow: 'hidden' }}>
       <Header
+        instruments={enabledInstruments.length > 0 ? enabledInstruments : undefined}
         instrument={instrument}
         setInstrument={setInstrument}
         timeframe={timeframe}
@@ -236,8 +265,13 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
                     localStorage.setItem('terminal_chart_viewport', mode);
                   }}
                 />
+                <ChartTimezoneSelector timezone={timezone} onChange={setTimezone} />
               </div>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Real-time chart</span>
+              <LiveChartStatus
+                status={liveStatus}
+                wsConnected={connected}
+                displayTimezone={`Display ${displayLabel}`}
+              />
             </div>
             <div style={{ flex: 1, overflow: 'hidden' }}>
               <CandleChart instrument={instrument} timeframe={timeframe} viewportMode={chartViewportMode} />

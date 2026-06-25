@@ -7,6 +7,38 @@ export async function getOHLCV(instrument: string, timeframe: string, start: str
   return res.json();
 }
 
+export async function getLiveStatus() {
+  const res = await fetch(`${API_BASE}/data/live-status`);
+  if (!res.ok) throw new Error('Failed to fetch live status');
+  return res.json();
+}
+
+export interface DataInstrumentConfig {
+  enabled: boolean;
+  pip_size: number;
+  session_hours: { open: string; close: string };
+  daily_break: { start: string; end: string } | null;
+  primary_timeframe: string;
+}
+
+export interface DataInstrumentsResponse {
+  enabled: string[];
+  supported: string[];
+  configs: Record<string, DataInstrumentConfig>;
+}
+
+export async function getDataInstruments(): Promise<DataInstrumentsResponse> {
+  const res = await fetch(`${API_BASE}/data/instruments`);
+  if (!res.ok) throw new Error('Failed to fetch instruments');
+  return res.json();
+}
+
+export async function releaseReplaySession() {
+  const res = await fetch(`${API_BASE}/replay/release`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to release replay session');
+  return res.json();
+}
+
 export async function getTradeSignals() {
   const res = await fetch(`${API_BASE}/signals/trade`);
   if (!res.ok) throw new Error('Failed to fetch trade signals');

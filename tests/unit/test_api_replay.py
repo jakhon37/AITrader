@@ -246,3 +246,12 @@ def test_replay_toggle_indicators(client):
     # Stop session
     client.post("/api/replay/stop")
 
+
+def test_replay_release_idempotent(client):
+    """POST /api/replay/release succeeds with or without an active session."""
+    response = client.post("/api/replay/release")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["had_session"] is False
+

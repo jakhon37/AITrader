@@ -47,6 +47,10 @@ from src.core.bus import create_bus
 from src.core.clock import set_clock, LiveClock
 from src.core.config import load_config
 from src.core.logging import get_logger
+from src.core.contracts import Instrument, Timeframe
+from src.data.feeds.dukascopy import DukascopyFeed
+from src.data.pipeline.auto_refresh import DataRefreshWorker
+from src.core.instruments import get_enabled_instruments
 from src.data.scheduler import DataScheduler
 from src.data.store import DataStore
 from src.execution.engine import ExecutionEngine
@@ -81,17 +85,41 @@ async def lifespan(app: FastAPI):
     # 5. Initialize Live Clock & DataScheduler
     clock = LiveClock()
     set_clock(clock)
+    pipeline = app_config.data.pipeline
+    dukascopy_feed = DukascopyFeed(
+        live_m1_cache_ttl_sec=pipeline.live_m1_cache_ttl_sec,
+        tick_enabled=pipeline.dukascopy_tick_enabled,
+    )
+    app.state.dukascopy_feed = dukascopy_feed
+
+    enabled_instruments = get_enabled_instruments(app_config)
+    bootstrap_pairs = [
+        (inst, Timeframe.H1) for inst in enabled_instruments
+    ]
     scheduler = DataScheduler(
         bus=bus,
         store=data_store,
         clock=clock,
-        active_pairs=[],
+        feed=dukascopy_feed,
+        data_source=app_config.data.source,
+        active_pairs=bootstrap_pairs,
+        focused_poll_interval_sec=pipeline.live_poll_sec_focused,
+        background_poll_interval_sec=pipeline.live_poll_sec_background,
+        m1_poll_interval_sec=float(pipeline.live_poll_sec_m1),
+        live_poll_adaptive=pipeline.live_poll_adaptive,
     )
     app.state.scheduler = scheduler
 
     # 6. Start the DataScheduler background task
     scheduler_task = asyncio.create_task(scheduler.run())
     app.state.scheduler_task = scheduler_task
+
+    # 7. Automatic Dukascopy tail refresh (startup + hourly)
+    refresh_worker = DataRefreshWorker(
+        store=data_store, cfg=app_config, feed=dukascopy_feed
+    )
+    app.state.refresh_worker = refresh_worker
+    await refresh_worker.start()
 
     # Initialize active replay session placeholder
     app.state.active_replay_session = None
@@ -100,6 +128,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup / Shutdown
+    await refresh_worker.stop()
     engine.stop()
     scheduler.stop()
     try:

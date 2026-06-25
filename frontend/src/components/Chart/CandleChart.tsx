@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useChartTimezone } from '../../hooks/useChartTimezone';
 import { useLightweightChart, useChartDataStream, useChartResize } from './hooks';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
@@ -208,8 +209,10 @@ export function CandleChart({
     }
   };
   
+  const { timezone } = useChartTimezone();
+
   // Custom hook to initialize lightweight-chart canvas and series, and handle resize observer
-  const { chart, candleSeries, volumeSeries } = useLightweightChart(containerRef);
+  const { chart, candleSeries, volumeSeries } = useLightweightChart(containerRef, timezone);
   useChartResize(chart, containerRef, {
     layoutKey,
     panelRef,

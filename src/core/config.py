@@ -68,6 +68,66 @@ from src.core.exceptions import ConfigError
 
 # ── Legacy sub-configs (preserved for backward compatibility) ─────────────────
 
+class DataPipelineConfig(BaseModel):
+    """Automated refresh cadence for the Dukascopy pipeline."""
+
+    tail_days: int = Field(ge=1, le=90, default=14)
+    full_lookback_days: int = Field(ge=30, le=365 * 10, default=365 * 5)
+    live_poll_adaptive: bool = Field(
+        default=True,
+        description="Align live poll cadence to candle close (slower mid-candle for 1h/1d)",
+    )
+    live_poll_sec_m1: int = Field(ge=10, le=300, default=60)
+    live_poll_sec_focused: float = Field(
+        ge=1.0,
+        le=60.0,
+        default=2.0,
+        description="Fixed focused poll when live_poll_adaptive=false",
+    )
+    live_poll_sec_background: float = Field(
+        ge=5.0,
+        le=120.0,
+        default=10.0,
+        description="Fixed background poll when live_poll_adaptive=false",
+    )
+    auto_refresh: bool = Field(
+        default=True,
+        description="Run tail refresh automatically in the API backend",
+    )
+    tail_refresh_interval_sec: int = Field(
+        ge=300,
+        le=86400 * 7,
+        default=3600,
+        description="M1 tail fetch + M5–H1 resample interval (default 1h)",
+    )
+    tail_resample_slow_interval_sec: int = Field(
+        ge=3600,
+        le=86400 * 7,
+        default=86400,
+        description="4h/1d resample from stored M1 (default 1/day)",
+    )
+    live_m1_cache_ttl_sec: float = Field(
+        ge=5.0,
+        le=300.0,
+        default=30.0,
+        description="Reuse one M1 download across live timeframe polls (seconds)",
+    )
+    dukascopy_tick_enabled: bool = Field(
+        default=True,
+        description="Use hourly tick files for current UTC day (daily .bi5 is T-1)",
+    )
+
+
+class DataInstrumentEntry(BaseModel):
+    """Deprecated — use ``enabled`` on each block in config/instruments.yaml instead."""
+
+    symbol: str = Field(description="Instrument enum value, e.g. EURUSD")
+    enabled: bool = Field(default=True)
+    dukascopy_symbol: Optional[str] = Field(
+        default=None, description="Override Dukascopy symbol (defaults to symbol)"
+    )
+
+
 class DataConfig(BaseModel):
     """Data layer: symbols, lookback, paths (no secrets)."""
 
@@ -80,6 +140,15 @@ class DataConfig(BaseModel):
     timeframe: str = Field(
         default="1d",
         description="Data timeframe: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo",
+    )
+    source: str = Field(
+        default="dukascopy",
+        description="Primary OHLCV source: dukascopy (yahoo deprecated for live)",
+    )
+    pipeline: DataPipelineConfig = Field(default_factory=DataPipelineConfig)
+    instruments: List[DataInstrumentEntry] = Field(
+        default_factory=list,
+        description="Deprecated fallback; prefer instruments.yaml enabled flags",
     )
 
 
@@ -151,6 +220,13 @@ class SignalDecayConfig(BaseModel):
     technical_conf: float = Field(default=1.0)
 
 
+class DailyBreakConfig(BaseModel):
+    """Intraday maintenance window (e.g. XAUUSD 21:00–22:00 UTC)."""
+
+    start: str = Field(description="UTC HH:MM inclusive")
+    end: str = Field(description="UTC HH:MM when session reopens")
+
+
 class InstrumentConfig(BaseModel):
     """Per-instrument trading configuration loaded from config/instruments.yaml.
 
@@ -158,9 +234,17 @@ class InstrumentConfig(BaseModel):
     See CONTRACTS.md for the full YAML shape.
     """
 
+    enabled:            bool = Field(
+        default=True,
+        description="Include in Dukascopy refresh, live scheduler, and chart UI",
+    )
     pip_size:           float
     lot_size:           float
     session_hours:      dict[str, str]          # {"open": "22:00", "close": "22:00"} UTC
+    daily_break:        Optional[DailyBreakConfig] = Field(
+        default=None,
+        description="Optional 1h pause before daily reopen (gold)",
+    )
     active_timeframes:  List[Timeframe]
     primary_timeframe:  Timeframe
     fundamental_weight: float = Field(ge=0.0, le=1.0, default=0.3)
@@ -217,11 +301,19 @@ class AppConfig(BaseModel):
         return cls.from_yaml(path)
 
     def get_symbols_normalized(self) -> List[str]:
-        """Return symbols as lowercase without underscores (e.g. EUR_USD → eurusd)."""
+        """Return enabled instrument ids (lowercase) for training/download scripts."""
+        try:
+            from src.core.instruments import get_enabled_instruments
+
+            enabled = [inst.value.lower() for inst in get_enabled_instruments()]
+            if enabled:
+                return enabled
+        except Exception:
+            pass
         return [s.lower().replace("_", "") for s in self.data.symbols]
 
     def get_primary_symbol(self) -> str:
-        """Return the first symbol in normalized format."""
+        """Return the first enabled instrument in normalized format."""
         syms = self.get_symbols_normalized()
         return syms[0] if syms else "eurusd"
 

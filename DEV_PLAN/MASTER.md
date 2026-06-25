@@ -229,10 +229,13 @@ formatter. Every log record includes: `division`, `signal_id` (correlation), `in
 single trade's full history can be reconstructed across every division that touched it.
 
 ### Instrument Config
-Each instrument defined in `config/instruments.yaml`: pip size, lot size, session hours,
+Each instrument defined in `config/instruments.yaml`: **`enabled`** flag (D02 scheduler /
+refresh / chart UI), pip size, lot size, session hours, optional `daily_break` (gold),
 active timeframes, fundamental/technical weight split, max position size, news halt
 window, and per-event-type signal decay hours. All divisions load instrument config via
-`src.core.config.InstrumentConfig`. See CONTRACTS.md for the full YAML shape.
+`load_instruments() → InstrumentConfig`. The `Instrument` enum in `contracts.py` is
+identity only (what the platform can speak about). Env YAML (`dev.yaml`) holds deployment
+settings (`data.pipeline`, model, risk) — not per-pair trading rules. See CONTRACTS.md.
 
 ---
 

@@ -1,3 +1,16 @@
+#!/usr/bin/env bash
+# Thin wrapper — operational backfill now lives in scripts/data_refresh.py
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+MODE="${1:-tail}"
+shift || true
+
+python scripts/data_refresh.py --mode "$MODE" --all "$@"
+
+
+
+
 
 
 
@@ -6,4 +19,4 @@
 
 
 # python scripts/generate_higher_timeframes.py --instrument EURUSD
-python scripts/generate_higher_timeframes.py --instrument XAUUSD
+# python scripts/generate_higher_timeframes.py --instrument XAUUSD

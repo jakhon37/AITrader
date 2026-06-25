@@ -1,6 +1,7 @@
 import { Layout } from 'lucide-react';
 
 interface Props {
+  instruments?: string[];
   instrument: string;
   setInstrument: (v: string) => void;
   timeframe: string;
@@ -16,7 +17,9 @@ const selectStyle: React.CSSProperties = {
   borderRadius: 6, padding: '4px 8px', fontSize: 13, fontWeight: 500, outline: 'none', cursor: 'pointer',
 };
 
-export function Header({ instrument, setInstrument, timeframe, setTimeframe, wsConnected, sidebarHidden, rightPanelHidden, onToggleRightPanel }: Props) {
+const DEFAULT_INSTRUMENTS = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD'];
+
+export function Header({ instruments = DEFAULT_INSTRUMENTS, instrument, setInstrument, timeframe, setTimeframe, wsConnected, sidebarHidden, rightPanelHidden, onToggleRightPanel }: Props) {
   return (
     <header
       style={{
@@ -34,10 +37,9 @@ export function Header({ instrument, setInstrument, timeframe, setTimeframe, wsC
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <label style={{ fontSize: 9, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 2 }}>Instrument</label>
           <select style={selectStyle} value={instrument} onChange={(e) => setInstrument(e.target.value)}>
-            <option value="EURUSD">EURUSD</option>
-            <option value="GBPUSD">GBPUSD</option>
-            <option value="USDJPY">USDJPY</option>
-            <option value="XAUUSD">XAUUSD</option>
+            {instruments.map((sym) => (
+              <option key={sym} value={sym}>{sym}</option>
+            ))}
           </select>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>

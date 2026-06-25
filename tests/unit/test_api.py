@@ -55,6 +55,35 @@ def test_health_endpoint(client):
     assert "divisions" in data
 
 
+def test_live_status_endpoint(client):
+    """Test GET /api/data/live-status returns scheduler health."""
+    response = client.get("/api/data/live-status")
+    assert response.status_code == 200
+    data = response.json()
+    assert "running" in data
+    assert "active_pairs" in data
+    assert "replay_active" in data
+    assert "live_poll_adaptive" in data
+    assert "enabled_instruments" in data
+    assert set(data["enabled_instruments"]) >= {
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
+        "XAUUSD",
+    }
+
+
+def test_data_instruments_endpoint(client):
+    """Test GET /api/data/instruments lists all enabled Dukascopy pairs."""
+    response = client.get("/api/data/instruments")
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data["enabled"]) >= {"EURUSD", "GBPUSD", "USDJPY", "XAUUSD"}
+    assert set(data["supported"]) == {"EURUSD", "GBPUSD", "USDJPY", "XAUUSD"}
+    assert "configs" in data
+    assert data["configs"]["XAUUSD"]["daily_break"]["start"] == "21:00"
+
+
 def test_config_endpoint(client):
     """Test GET /api/config/{instrument} loads from instruments.yaml."""
     response = client.get("/api/config/eurusd")
@@ -87,8 +116,8 @@ def test_signals_endpoints(client):
 
 def test_historical_ohlcv_empty(client):
     """Test GET /api/data/ohlcv returns empty list when no data is loaded."""
-    with patch("yfinance.download") as mock_download:
-        mock_download.return_value = pd.DataFrame()
+    with patch("src.api.routes.data.DukascopyFeed.fetch_range") as mock_fetch:
+        mock_fetch.return_value = pd.DataFrame()
         response = client.get(
             "/api/data/ohlcv?instrument=EURUSD&timeframe=1h&start=2026-06-01T00:00:00Z&end=2026-06-02T00:00:00Z"
         )
@@ -97,30 +126,36 @@ def test_historical_ohlcv_empty(client):
             assert response.json() == []
 
 
-def test_historical_ohlcv_gap_filling(client):
-    """Test that get_ohlcv triggers gap filling logic using yfinance."""
-    with patch("yfinance.download") as mock_download:
-        idx = pd.date_range("2026-06-01T00:00:00Z", "2026-06-01T05:00:00Z", freq="1h", tz="UTC")
-        df = pd.DataFrame(
-            {
-                "open": [1.1, 1.11, 1.12, 1.13, 1.14, 1.15],
-                "high": [1.12, 1.13, 1.14, 1.15, 1.16, 1.17],
-                "low": [1.09, 1.1, 1.11, 1.12, 1.13, 1.14],
-                "close": [1.11, 1.12, 1.13, 1.14, 1.15, 1.16],
-                "volume": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-            },
-            index=idx
-        )
-        mock_download.return_value = df
-
+@pytest.mark.parametrize("instrument", ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"])
+def test_historical_ohlcv_gap_filling(client, instrument):
+    """Test that get_ohlcv triggers gap filling for every enabled instrument."""
+    idx = pd.date_range("2026-06-01T00:00:00Z", "2026-06-01T05:00:00Z", freq="1h", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "open": [1.1, 1.11, 1.12, 1.13, 1.14, 1.15],
+            "high": [1.12, 1.13, 1.14, 1.15, 1.16, 1.17],
+            "low": [1.09, 1.1, 1.11, 1.12, 1.13, 1.14],
+            "close": [1.11, 1.12, 1.13, 1.14, 1.15, 1.16],
+            "volume": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
+        },
+        index=idx,
+    )
+    store = client.app.state.data_store
+    with (
+        patch("src.api.routes.data.store_needs_gap_fill", return_value=True),
+        patch("src.api.routes.data.DukascopyFeed.fetch_range", return_value=df),
+        patch.object(store, "write_ohlcv"),
+        patch.object(store, "get_ohlcv", return_value=df),
+    ):
         response = client.get(
-            "/api/data/ohlcv?instrument=EURUSD&timeframe=1h&start=2026-06-01T00:00:00Z&end=2026-06-01T05:00:00Z"
+            f"/api/data/ohlcv?instrument={instrument}&timeframe=1h"
+            "&start=2026-06-01T00:00:00Z&end=2026-06-01T05:00:00Z"
         )
-        assert response.status_code == 200
-        candles = response.json()
-        assert len(candles) > 0
-        assert candles[0]["open"] == 1.1
-        assert candles[-1]["close"] == 1.16
+    assert response.status_code == 200
+    candles = response.json()
+    assert len(candles) > 0
+    assert candles[0]["open"] == 1.1
+    assert candles[-1]["close"] == 1.16
 
 
 @pytest.mark.asyncio
