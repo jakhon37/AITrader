@@ -179,8 +179,26 @@ class DecisionEngine:
                     timestamp=current_time,
                 )
             else:
-                # Silence neutral spam if the prior state was already neutral
-                _log.debug("decision_engine_silence_neutral", instrument=instrument.value)
+                # For dev/demo: still publish neutral so UI feed and fusion panel update on every bar
+                self.state.prior_was_directional[instrument] = False
+                await self._publish_trade_signal(
+                    instrument=instrument,
+                    direction=Direction.NEUTRAL,
+                    confidence=fusion.confidence,
+                    strength=fusion.strength,
+                    f_weight=fusion.fundamental_weight,
+                    t_weight=fusion.technical_weight,
+                    suggested_side=None,
+                    suggested_entry=None,
+                    suggested_sl=None,
+                    suggested_tp=None,
+                    suggested_size=None,
+                    narrative="No directional edge. Market is neutral.",
+                    f_sig=f_sig,
+                    t_sig=t_sig,
+                    valid_until=t_sig.valid_until,
+                    timestamp=current_time,
+                )
             return
 
         # Fused direction is directional (LONG or SHORT)
