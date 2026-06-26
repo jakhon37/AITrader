@@ -232,6 +232,18 @@ class TradeSignal(BaseModel):
     is_limit:           bool = False              # whether this is a limit entry order
 
 
+class ChartMarker(BaseModel):
+    """Persisted LONG/SHORT flip marker for chart overlay (no NEUTRAL)."""
+
+    marker_id:   str
+    instrument:  Instrument
+    direction:   Direction
+    bar_time:    datetime
+    signal_id:   str
+    confidence:  Annotated[float, Field(ge=0.0, le=1.0)]
+    created_at:  datetime
+
+
 # ── Execution Types ───────────────────────────────────────────────────────────
 
 class Order(BaseModel):

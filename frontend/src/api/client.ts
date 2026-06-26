@@ -60,6 +60,14 @@ export async function getTradeSignals() {
   return res.json();
 }
 
+export async function getChartMarkers(instrument?: string, limit = 200) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (instrument) params.set('instrument', instrument);
+  const res = await fetch(`${API_BASE}/signals/chart-markers?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch chart markers');
+  return res.json();
+}
+
 export async function getLatestSignals(instrument: string) {
   const params = new URLSearchParams({ instrument });
   const res = await fetch(`${API_BASE}/signals/latest?${params.toString()}`);

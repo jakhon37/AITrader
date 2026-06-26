@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from src.decision.chart_markers import ChartMarkerStore
 from src.core.contracts import (
+    ChartMarker,
     FundamentalSignal,
     OrderEvent,
     PortfolioState,
@@ -22,8 +26,11 @@ latest_fundamental: Dict[str, FundamentalSignal] = {}  # instrument -> Fundament
 technical_history: List[TechnicalSignal] = []
 fundamental_history: List[FundamentalSignal] = []
 trade_signal_history: List[TradeSignal] = []
+chart_marker_history: List[ChartMarker] = []
 order_event_history: List[OrderEvent] = []
 health_history: List[SystemHealthEvent] = []
+
+chart_marker_store: Optional["ChartMarkerStore"] = None
 
 
 def add_to_history(lst: List[Any], item: Any) -> None:

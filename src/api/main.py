@@ -59,6 +59,7 @@ from src.data.sources.news_fetcher import NewsFetcher
 from src.data.sources.calendar import CalendarFetcher
 from src.data.sources.fred import FredFetcher
 from src.decision.engine import DecisionEngine
+from src.decision.chart_markers import ChartMarkerStore
 from src.execution.engine import ExecutionEngine
 from src.technical.engine import TechnicalEngine
 from src.fundamental.agent import FundamentalAgent
@@ -66,6 +67,9 @@ from src.notifier.service import NotifierService
 from src.ops.monitor import OpsMonitor
 import asyncio
 import os
+from pathlib import Path
+
+from src.api import state as api_state
 
 _log = get_logger("D10-WEBUI")
 
@@ -108,10 +112,20 @@ async def lifespan(app: FastAPI):
     app.state.data_store = data_store
     app.state.app_config = app_config
 
-    # 3. Create Bus & Setup WebSocket Bridge
+    # 3. Chart marker store (alternating LONG/SHORT flips for chart overlay)
+    if os.environ.get("AITRADER_TESTING") == "1":
+        chart_marker_db = Path("/tmp/aitrader-chart-markers-test.db")
+    else:
+        chart_marker_db = Path(app_config.data.data_dir) / "state" / "chart_markers.db"
+        chart_marker_db.parent.mkdir(parents=True, exist_ok=True)
+    chart_marker_store = ChartMarkerStore(chart_marker_db)
+    api_state.chart_marker_store = chart_marker_store
+    app.state.chart_marker_store = chart_marker_store
+
+    # 4. Create Bus & Setup WebSocket Bridge
     bus = create_bus(app_config.core.bus_backend)
     app.state.bus = bus
-    await setup_ws_bridge(bus)
+    await setup_ws_bridge(bus, chart_marker_store=chart_marker_store)
 
     app.state.active_replay_session = None
     app.state.live_signal_pipeline_paused = False

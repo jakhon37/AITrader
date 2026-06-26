@@ -212,7 +212,7 @@ export function CandleChart({
   };
   
   const { timezone } = useChartTimezone();
-  const tradeSignals = useSignalsStore((s) => s.tradeSignals);
+  const chartMarkers = useSignalsStore((s) => s.chartMarkers);
 
   // Custom hook to initialize lightweight-chart canvas and series, and handle resize observer
   const { chart, candleSeries, volumeSeries } = useLightweightChart(containerRef, timezone);
@@ -331,7 +331,7 @@ export function CandleChart({
       {/* Chart container */}
       <div style={{ flex: 1, position: 'relative', height: '100%', overflow: 'visible' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-        <SignalOverlay candleSeries={candleSeries} tradeSignals={tradeSignals} instrument={instrument} />
+        <SignalOverlay candleSeries={candleSeries} chartMarkers={chartMarkers} instrument={instrument} />
         {chart && candleSeries && (
           <DrawingOverlay
             chart={chart}

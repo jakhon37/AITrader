@@ -17,6 +17,7 @@ import {
   getFundamentalSignals,
   getLatestSignals,
   getTradeSignals,
+  getChartMarkers,
   releaseReplaySession,
 } from '../../api/client';
 import { useSignalsStore } from '../../store/signals';
@@ -39,6 +40,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   });
   const connected = useSignalsStore((state) => state.wsConnected);
   const initTradeSignals = useSignalsStore((state) => state.initTradeSignals);
+  const initChartMarkers = useSignalsStore((state) => state.initChartMarkers);
   const initFundamentalSignals = useSignalsStore((state) => state.initFundamentalSignals);
   const setTechnicalSignal = useSignalsStore((state) => state.setTechnicalSignal);
   const addTradeSignal = useSignalsStore((state) => state.addTradeSignal);
@@ -64,6 +66,12 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
       .then((signals) => initTradeSignals(Array.isArray(signals) ? signals : []))
       .catch(() => {});
   }, [initTradeSignals]);
+
+  useEffect(() => {
+    getChartMarkers()
+      .then((markers) => initChartMarkers(Array.isArray(markers) ? markers : []))
+      .catch(() => {});
+  }, [initChartMarkers]);
 
   useEffect(() => {
     getFundamentalSignals()

@@ -18,6 +18,7 @@ from src.core.contracts import (
     TechnicalSignal,
     TradeSignal,
 )
+from src.decision.chart_markers import ChartMarkerStore
 
 
 async def forward_to_ws(channel: BusChannel, payload: BaseModel) -> None:
@@ -26,7 +27,10 @@ async def forward_to_ws(channel: BusChannel, payload: BaseModel) -> None:
     await ws_manager.broadcast({"type": channel.value, "data": data})
 
 
-async def setup_ws_bridge(bus: Bus) -> None:
+async def setup_ws_bridge(
+    bus: Bus,
+    chart_marker_store: ChartMarkerStore | None = None,
+) -> None:
     """Subscribe handlers to the bus to forward events to WebSockets and cache state."""
 
     # 1. OHLCV Bar
@@ -51,6 +55,13 @@ async def setup_ws_bridge(bus: Bus) -> None:
     async def on_trade_signal(payload: TradeSignal) -> None:
         state.add_to_history(state.trade_signal_history, payload)
         await forward_to_ws(BusChannel.TRADE_SIGNAL, payload)
+
+        if chart_marker_store is not None:
+            marker = chart_marker_store.try_add_from_trade(payload)
+            if marker is not None:
+                state.add_to_history(state.chart_marker_history, marker)
+                data = json.loads(marker.model_dump_json())
+                await ws_manager.broadcast({"type": "chart_marker", "data": data})
 
     # 5. Order Event
     async def on_order_event(payload: OrderEvent) -> None:

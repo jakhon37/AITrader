@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { createSeriesMarkers } from 'lightweight-charts';
 import type { ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time } from 'lightweight-charts';
-import type { TradeSignal } from '../../types';
+import type { ChartMarker } from '../../types';
 
 interface Props {
   candleSeries: ISeriesApi<'Candlestick'> | null;
-  tradeSignals: TradeSignal[];
+  chartMarkers: ChartMarker[];
   instrument: string;
 }
 
@@ -13,10 +13,15 @@ function toChartTime(iso: string): Time {
   return Math.floor(new Date(iso).getTime() / 1000) as Time;
 }
 
-export function SignalOverlay({ candleSeries, tradeSignals, instrument }: Props) {
+function instrumentKey(value: string | { value?: string } | undefined): string {
+  if (!value) return '';
+  if (typeof value === 'string') return value.toUpperCase();
+  return String(value.value ?? '').toUpperCase();
+}
+
+export function SignalOverlay({ candleSeries, chartMarkers, instrument }: Props) {
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
-  // Attach/detach markers plugin when series changes
   useEffect(() => {
     if (!candleSeries) {
       markersPluginRef.current = null;
@@ -32,28 +37,27 @@ export function SignalOverlay({ candleSeries, tradeSignals, instrument }: Props)
     };
   }, [candleSeries]);
 
-  // Update markers when signals or instrument change
   useEffect(() => {
     const plugin = markersPluginRef.current;
     if (!plugin) return;
 
-    const markers: SeriesMarker<Time>[] = tradeSignals
-      .filter((s) => s.instrument?.toUpperCase() === instrument.toUpperCase())
-      .slice(-50)
-      .map((signal) => {
-        const isLong = signal.direction === 'long' || signal.suggested_side === 'buy';
-        const isShort = signal.direction === 'short' || signal.suggested_side === 'sell';
+    const inst = instrument.toUpperCase();
+    const markers: SeriesMarker<Time>[] = chartMarkers
+      .filter((m) => instrumentKey(m.instrument) === inst)
+      .filter((m) => m.direction === 'long' || m.direction === 'short')
+      .map((marker) => {
+        const isLong = marker.direction === 'long';
         return {
-          time: toChartTime(signal.timestamp),
+          time: toChartTime(marker.bar_time),
           position: isLong ? 'belowBar' : 'aboveBar',
-          color: isLong ? '#00e676' : isShort ? '#ff1744' : '#8e9bb4',
-          shape: isLong ? 'arrowUp' : isShort ? 'arrowDown' : 'circle',
-          text: signal.direction?.toUpperCase() ?? 'SIG',
+          color: isLong ? '#00e676' : '#ff1744',
+          shape: isLong ? 'arrowUp' : 'arrowDown',
+          text: isLong ? 'LONG' : 'SHORT',
         };
       });
 
     plugin.setMarkers(markers);
-  }, [candleSeries, tradeSignals, instrument]);
+  }, [candleSeries, chartMarkers, instrument]);
 
   return null;
 }

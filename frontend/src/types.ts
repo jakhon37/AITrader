@@ -39,6 +39,17 @@ export interface TradeSignal {
   model_version?: string | null;
 }
 
+/** Persisted LONG/SHORT flip marker for chart overlay (no NEUTRAL). */
+export interface ChartMarker {
+  marker_id: string;
+  instrument: string | { value?: string };
+  direction: 'long' | 'short';
+  bar_time: string;
+  signal_id: string;
+  confidence: number;
+  created_at: string;
+}
+
 export interface FundamentalSignal {
   signal_id: string;
   instrument: string;

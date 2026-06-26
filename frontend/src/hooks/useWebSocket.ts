@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSignalsStore } from '../store/signals';
 import { usePortfolioStore } from '../store/portfolio';
-import type { TradeSignal, FundamentalSignal, TechnicalSignal, PortfolioState, WsMessage } from '../types';
+import type { ChartMarker, TradeSignal, FundamentalSignal, TechnicalSignal, PortfolioState, WsMessage } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:8000/ws`;
 const RECONNECT_INITIAL_MS = 1000;
@@ -22,7 +22,14 @@ export function useWebSocket() {
   const isMounted = useRef(true);
   const connectGenRef = useRef(0);
 
-  const { addTradeSignal, addFundamentalSignal, setTechnicalSignal, setHealthDiv, setWsConnected } = useSignalsStore();
+  const {
+    addTradeSignal,
+    addChartMarker,
+    addFundamentalSignal,
+    setTechnicalSignal,
+    setHealthDiv,
+    setWsConnected,
+  } = useSignalsStore();
   const { setPortfolio } = usePortfolioStore();
 
   useEffect(() => {
@@ -51,6 +58,9 @@ export function useWebSocket() {
           switch (msg.type) {
             case 'trade_signal':
               addTradeSignal(data as unknown as TradeSignal);
+              break;
+            case 'chart_marker':
+              addChartMarker(data as unknown as ChartMarker);
               break;
             case 'fundamental_signal':
               addFundamentalSignal(data as unknown as FundamentalSignal);

@@ -66,6 +66,14 @@ def test_pipeline_health_endpoint(client):
     assert "decision_engine" in data["components"]
 
 
+def test_chart_markers_endpoint(client):
+    """GET /api/signals/chart-markers returns persisted flip markers list."""
+    response = client.get("/api/signals/chart-markers")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+
+
 def test_health_endpoint(client):
     """Test GET /api/health returns ok status."""
     response = client.get("/api/health")
