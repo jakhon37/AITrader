@@ -52,7 +52,7 @@ from src.core.contracts import Instrument, Timeframe
 from src.data.feeds.dukascopy import DukascopyFeed
 from src.data.pipeline.auto_refresh import DataRefreshWorker
 from src.core.config import load_instruments
-from src.core.instruments import get_enabled_instruments
+from src.core.instruments import get_enabled_instruments, get_scheduler_active_pairs
 from src.data.scheduler import DataScheduler
 from src.data.store import DataStore
 from src.data.sources.news_fetcher import NewsFetcher
@@ -63,6 +63,7 @@ from src.execution.engine import ExecutionEngine
 from src.technical.engine import TechnicalEngine
 from src.fundamental.agent import FundamentalAgent
 from src.notifier.service import NotifierService
+from src.ops.monitor import OpsMonitor
 import asyncio
 import os
 
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI):
     if _is_testing():
         engine = ExecutionEngine(config=app_config, bus=bus)
         app.state.engine = engine
+        app.state.execution_store = engine.execution_store
         engine.start()
         app.state.scheduler = _TestSchedulerStub()
         app.state.dukascopy_feed = None
@@ -133,7 +135,9 @@ async def lifespan(app: FastAPI):
     configured_broker = getattr(app_config.execution, 'broker', 'mock')
     engine = ExecutionEngine(config=app_config, bus=bus)
     app.state.engine = engine
+    app.state.execution_store = engine.execution_store
     engine.start()
+    await engine.seed_portfolio_state()
     _log.info("execution_engine_started", configured_broker=configured_broker, active="sim")
 
     # 5. Live signal spine: OHLCV_BAR → TechnicalSignal → TradeSignal
@@ -165,9 +169,7 @@ async def lifespan(app: FastAPI):
     app.state.dukascopy_feed = dukascopy_feed
 
     enabled_instruments = get_enabled_instruments(app_config)
-    bootstrap_pairs = [
-        (inst, Timeframe.H1) for inst in enabled_instruments
-    ]
+    bootstrap_pairs = get_scheduler_active_pairs(app_config)
     scheduler = DataScheduler(
         bus=bus,
         store=data_store,
@@ -247,17 +249,43 @@ async def lifespan(app: FastAPI):
 
     # 11. D07 Notifier (Telegram) if keys present
     if os.environ.get("TELEGRAM_BOT_TOKEN"):
-        notifier = NotifierService(config=app_config, bus=bus)
+        notifier = NotifierService(
+            config=app_config,
+            bus=bus,
+            execution_store=engine.execution_store,
+            fundamental_agent=fundamental_agent,
+            data_store=data_store,
+        )
         app.state.notifier = notifier
+        notifier.seed_portfolio_cache(engine.execution_store.get_latest_portfolio())
         await notifier.start()
+        bootstrap_signals = await fundamental_agent.publish_dev_bootstrap()
+        if bootstrap_signals:
+            notifier.seed_fundamental_cache(bootstrap_signals)
         _log.info("notifier_service_started")
     else:
         _log.info("notifier_skipped_no_telegram_key")
+
+    # 12. D11 Ops monitor (data freshness, signal flow, audit, registry)
+    ops_monitor = OpsMonitor(
+        bus=bus,
+        store=data_store,
+        app_config=app_config,
+        model_name=getattr(app_config.model, "model_type", None),
+        scheduler=scheduler,
+        notifier_active=bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
+        fundamental_active=True,
+    )
+    app.state.ops_monitor = ops_monitor
+    await ops_monitor.start()
+    _log.info("ops_monitor_started")
 
     _log.info("webui_api_started")
     yield
 
     # Cleanup / Shutdown
+    if "ops_monitor" in app.state and app.state.ops_monitor:
+        await app.state.ops_monitor.stop()
     await refresh_worker.stop()
     await technical_engine.stop()
     await decision_engine.stop()

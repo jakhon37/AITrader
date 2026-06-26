@@ -1,5 +1,6 @@
 import { Shield, ChevronDown, ChevronUp } from 'lucide-react';
 import { useSignalsStore } from '../../store/signals';
+import { plainTextFromLlm } from '../../utils/plainText';
 
 interface FusionPanelProps {
   instrument: string;
@@ -8,16 +9,10 @@ interface FusionPanelProps {
 }
 
 export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: FusionPanelProps) {
-  const tradeSignals = useSignalsStore((s) => s.tradeSignals);
-  const fundamentalSignals = useSignalsStore((s) => s.fundamentalSignals);
-  const technicalSignal = useSignalsStore((s) => s.technicalByInstrument[instrument.toUpperCase()]);
-
   const instKey = instrument.toUpperCase();
-  const latest =
-    tradeSignals.find((s) => String(s.instrument).toUpperCase() === instKey) ?? tradeSignals[0];
-  const fundamental =
-    fundamentalSignals.find((s) => String(s.instrument).toUpperCase() === instKey)
-    ?? fundamentalSignals.find((s) => !s.source_headline?.startsWith('Upcoming:'));
+  const latest = useSignalsStore((s) => s.tradeByInstrument[instKey]);
+  const fundamental = useSignalsStore((s) => s.fundamentalByInstrument[instKey]);
+  const technicalSignal = useSignalsStore((s) => s.technicalByInstrument[instKey]);
 
   const dirColor = (dir: string) =>
     dir === 'long' ? 'var(--neon-green)' : dir === 'short' ? 'var(--neon-red)' : 'var(--text-muted)';
@@ -28,8 +23,8 @@ export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: Fusio
     return 'BEARISH';
   };
 
-  const fWeight = (latest as { fundamental_weight?: number })?.fundamental_weight;
-  const tWeight = (latest as { technical_weight?: number })?.technical_weight;
+  const fWeight = latest?.fundamental_weight;
+  const tWeight = latest?.technical_weight;
 
   return (
     <div
@@ -47,7 +42,7 @@ export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: Fusio
         }}
       >
         <h3 style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-secondary)', margin: 0 }}>
-          Fusion Engine
+          Fusion Engine · {instKey}
         </h3>
         {onToggleCollapse && (
           <button
@@ -64,14 +59,20 @@ export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: Fusio
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Fundamental</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: fundamental ? dirColor(fundamental.direction) : 'var(--text-muted)' }}>
-              {fundamental ? fundLabel(fundamental.sentiment_score, fundamental.direction) : 'Awaiting...'}
+              {fundamental
+                ? `${fundLabel(fundamental.sentiment_score, fundamental.direction)}${
+                    fundamental.source_headline?.startsWith('Upcoming:') ? ' · CAL' : ''
+                  }`
+                : 'Awaiting...'}
             </span>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
             <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Technical Bias</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: technicalSignal ? dirColor(technicalSignal.direction) : 'var(--text-muted)' }}>
-              {technicalSignal ? technicalSignal.direction.toUpperCase() : 'Awaiting...'}
+              {technicalSignal
+                ? `${technicalSignal.direction.toUpperCase()} (${Math.round(technicalSignal.confidence * 100)}%)`
+                : 'Awaiting...'}
             </span>
           </div>
 
@@ -92,13 +93,21 @@ export function FusionPanel({ instrument, isCollapsed, onToggleCollapse }: Fusio
                 <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                   Confidence: <strong style={{ color: 'var(--text-primary)' }}>{Math.round(latest.confidence * 100)}%</strong>
                 </span>
-                {latest.suggested_entry && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Entry: {latest.suggested_entry.toFixed(4)}</span>}
+                {latest.suggested_entry != null && (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Entry: {latest.suggested_entry.toFixed(4)}</span>
+                )}
                 {latest.narrative && (
-                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5, margin: '8px 0 0', textAlign: 'center' }}>{latest.narrative}</p>
+                  <p style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5, margin: '8px 0 0', textAlign: 'center' }}>
+                    {plainTextFromLlm(latest.narrative)}
+                  </p>
                 )}
               </>
             ) : (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Waiting for decision...</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.45 }}>
+                No fused decision for {instKey} yet.
+                <br />
+                Waiting for the next {instKey} technical bar close.
+              </span>
             )}
           </div>
         </div>

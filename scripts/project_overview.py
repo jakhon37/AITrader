@@ -128,13 +128,22 @@ def main() -> None:
     raw_data_dir = project_root / "data" / "raw"
     fixtures_dir = project_root / "tests" / "fixtures"
     
-    raw_files = list(raw_data_dir.glob("*.csv")) if raw_data_dir.is_dir() else []
+    raw_parquet = (
+        list(raw_data_dir.rglob("*.parquet")) if raw_data_dir.is_dir() else []
+    )
+    raw_csv = list(raw_data_dir.glob("*.csv")) if raw_data_dir.is_dir() else []
     fixture_files = list(fixtures_dir.glob("*.csv")) if fixtures_dir.is_dir() else []
-    
-    print(f"  Raw Data Files (data/raw/): {len(raw_files)} found")
-    for f in raw_files:
-        size_kb = f.stat().st_size / 1024
-        print(f"    - {f.name} ({size_kb:.1f} KB)")
+
+    raw_size_mb = sum(f.stat().st_size for f in raw_parquet) / (1024 * 1024)
+    print(
+        f"  Raw OHLCV (data/raw/): {len(raw_parquet)} parquet files"
+        f" ({raw_size_mb:.1f} MB)"
+    )
+    if raw_csv:
+        print(f"  Legacy CSV in data/raw/: {len(raw_csv)} found")
+        for f in raw_csv:
+            size_kb = f.stat().st_size / 1024
+            print(f"    - {f.name} ({size_kb:.1f} KB)")
         
     print(f"  Test Fixtures (tests/fixtures/): {len(fixture_files)} found")
     for f in fixture_files:
@@ -187,7 +196,7 @@ def main() -> None:
     print("    - Lint check:          ruff check src tests scripts")
     print("    - Type check:          mypy src")
     print("    - Run Backtest:        python scripts/run_backtest.py")
-    print("    - Start paper trading: ./scripts/start_paper.sh")
+    print("    - Start Web UI + paper:  ./scripts/start_webui.sh")
 
 if __name__ == "__main__":
     main()

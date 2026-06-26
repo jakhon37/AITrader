@@ -25,6 +25,25 @@ DEFAULT_WEIGHTS = {
     Timeframe.W1: {Timeframe.W1: 0.50, Timeframe.D1: 0.35, Timeframe.H4: 0.15},
 }
 
+# MT4 Scalping XAUUSD M15 panel weights (M5–D1)
+SCALPING_WEIGHTS = {
+    Timeframe.M15: {
+        Timeframe.M5: 0.15,
+        Timeframe.M15: 0.25,
+        Timeframe.M30: 0.15,
+        Timeframe.H1: 0.20,
+        Timeframe.H4: 0.15,
+        Timeframe.D1: 0.10,
+    },
+}
+
+
+def confluence_weights(primary_tf: Timeframe, *, scalping: bool = False) -> dict[Timeframe, float]:
+    """Resolve multi-TF weights for the active scoring mode."""
+    if scalping and primary_tf in SCALPING_WEIGHTS:
+        return SCALPING_WEIGHTS[primary_tf]
+    return DEFAULT_WEIGHTS.get(primary_tf, {primary_tf: 1.0})
+
 
 def compute_tf_bias(
     tf: Timeframe,
@@ -185,8 +204,7 @@ class ConfluenceCombiner:
                 if primary_bias.regime == MarketRegime.TRENDING and primary_bias.direction == consensus_direction:
                     confidence += 0.05
 
-                # 3. Price at key S/R level
-                # Check if distance to support or resistance is less than 0.2 * ATR
+                # 3. Price at key S/R level or outer FL band (scalping)
                 close = primary_bias.indicators.get("close", 0.0)
                 support = primary_bias.indicators.get("support", 0.0)
                 resistance = primary_bias.indicators.get("resistance", 0.0)
@@ -197,6 +215,18 @@ class ConfluenceCombiner:
                     dist_to_resistance = abs(resistance - close) if resistance > 0 else float("inf")
                     if dist_to_support < 0.2 * atr or dist_to_resistance < 0.2 * atr:
                         confidence += 0.05
+
+                band_pos = primary_bias.indicators.get("band_position")
+                if band_pos is not None and (
+                    band_pos <= 0.2 or band_pos >= 0.8
+                ):
+                    confidence += 0.05
+
+                if primary_bias.indicators.get("entry_trigger", 0.0) >= 1.0:
+                    confidence += 0.05
+
+                if primary_bias.indicators.get("trend_strong", 0.0) >= 1.0:
+                    confidence += 0.05
 
         # Cap confidence at 1.0
         confidence = min(confidence, 1.0)

@@ -61,7 +61,7 @@ Docker sets `PYTHONPATH=/app/src`, `CONFIG_DIR=/app/config`. Test scripts set sa
 
 ## Scripts
 Common entrypoints:
-- `scripts/run_paper.py`, `scripts/start_paper.sh`
+- `scripts/start_webui.sh`, `scripts/stop_webui.sh`, `scripts/status_paper.sh`
 - `scripts/run_backtest.py`
 - `scripts/train_model.py`, `scripts/train_all.py`
 

@@ -223,10 +223,21 @@ async def test_command_processor() -> None:
     async def mock_reply(msg: str) -> None:
         sent_replies.append(msg)
 
-    # 1. Test /help
+    # 1. Test /help and /start alias
     await proc.handle_message({"text": "/help", "from": {"id": 123}}, mock_reply)
     assert len(sent_replies) == 1
     assert "/status" in sent_replies[0]
+    assert "/message" in sent_replies[0]
+
+    sent_replies.clear()
+    await proc.handle_message(
+        {"text": "/start", "from": {"id": 123, "first_name": "Jahon"}},
+        mock_reply,
+    )
+    assert len(sent_replies) == 1
+    assert "Welcome, Jahon" in sent_replies[0]
+    assert "Quick commands" in sent_replies[0]
+    assert "/help for the full command reference" in sent_replies[0]
 
     # 2. Test /status
     sent_replies.clear()

@@ -27,7 +27,7 @@ from src.core.ids import new_signal_id
 from src.core.logging import get_logger
 from src.decision.expiry import is_valid
 from src.decision.fusion import combine
-from src.decision.narrator import build_narrative
+from src.decision.narrator import build_narrative, build_neutral_narrative
 from src.decision.registry import resolve_active_model_version
 from src.decision.sizer import compute_suggested_size
 from src.decision.state import SignalState
@@ -180,9 +180,13 @@ class DecisionEngine:
                     timestamp=current_time,
                 )
             else:
-                if self.state.last_published_direction.get(instrument) == Direction.NEUTRAL:
+                if (
+                    self.state.last_published_direction.get(instrument) == Direction.NEUTRAL
+                    and self.state.last_fused_technical_id.get(instrument) == t_sig.signal_id
+                ):
                     return
                 self.state.prior_was_directional[instrument] = False
+                self.state.last_fused_technical_id[instrument] = t_sig.signal_id
                 await self._publish_trade_signal(
                     instrument=instrument,
                     direction=Direction.NEUTRAL,
@@ -195,7 +199,7 @@ class DecisionEngine:
                     suggested_sl=None,
                     suggested_tp=None,
                     suggested_size=None,
-                    narrative="No directional edge. Market is neutral.",
+                    narrative=build_neutral_narrative(f_sig, t_sig, fusion.confidence),
                     f_sig=f_sig,
                     t_sig=t_sig,
                     valid_until=t_sig.valid_until,
@@ -284,6 +288,7 @@ class DecisionEngine:
         )
 
         self.state.last_published_direction[instrument] = direction
+        self.state.last_fused_technical_id[instrument] = t_sig.signal_id
         await self.bus.publish(BusChannel.TRADE_SIGNAL, trade_signal)
         _log.info(
             "trade_signal_published",

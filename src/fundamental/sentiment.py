@@ -84,6 +84,15 @@ class SentimentScorer:
         else:
             _log.info("sentiment_scorer_init", backend="finbert", model=model_name)
 
+    def openrouter_key_configured(self) -> bool:
+        return bool(self._openrouter_api_key)
+
+    def openrouter_api_key(self) -> Optional[str]:
+        return self._openrouter_api_key
+
+    def cached_openrouter_model(self) -> Optional[str]:
+        return self._openrouter_model
+
     def _get_cache_key(self, text: str, article_id: Optional[str] = None) -> str:
         if article_id:
             return f"id:{article_id}"

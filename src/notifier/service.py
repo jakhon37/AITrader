@@ -7,7 +7,12 @@ and integrates inbound commands with the Telegram Bot API client.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from src.data.store import DataStore
+    from src.execution.store import ExecutionStore
+    from src.fundamental.agent import FundamentalAgent
 
 from src.core.clock import now
 from src.core.config import AppConfig
@@ -47,6 +52,9 @@ class NotifierService:
         aggregator: MessageAggregator | None = None,
         cache: CommandCache | None = None,
         processor: CommandProcessor | None = None,
+        execution_store: Optional["ExecutionStore"] = None,
+        fundamental_agent: Optional["FundamentalAgent"] = None,
+        data_store: Optional["DataStore"] = None,
     ) -> None:
         self.config = config
         self.bus = bus
@@ -60,7 +68,14 @@ class NotifierService:
 
         # Cache & command processor initialization
         self.cache = cache or CommandCache()
-        self.processor = processor or CommandProcessor(bus=self.bus, config=self.config, cache=self.cache)
+        self.processor = processor or CommandProcessor(
+            bus=self.bus,
+            config=self.config,
+            cache=self.cache,
+            execution_store=execution_store,
+            fundamental_agent=fundamental_agent,
+            data_store=data_store,
+        )
 
         # Subscribe to updates
         self.client.register_inbound_handler(self.handle_inbound_message)
@@ -154,3 +169,13 @@ class NotifierService:
     async def handle_portfolio_update(self, state: PortfolioState) -> None:
         """Silently update the local portfolio cache for inbound query commands."""
         self.cache.portfolio_state = state
+
+    def seed_portfolio_cache(self, state: Optional[PortfolioState]) -> None:
+        """Prime command cache from SQLite on startup."""
+        if state is not None:
+            self.cache.portfolio_state = state
+
+    def seed_fundamental_cache(self, signals: list[FundamentalSignal]) -> None:
+        """Prime /fundamental command cache (e.g. after dev bootstrap publish)."""
+        for signal in signals:
+            self.cache.add_fundamental_signal(signal)

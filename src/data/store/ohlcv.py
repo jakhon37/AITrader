@@ -228,6 +228,28 @@ class OHLCVMixin:
         )
         return df
 
+    def peek_latest_ohlcv(
+        self,
+        instrument: Instrument,
+        timeframe: Timeframe,
+    ) -> tuple[Optional[datetime], Optional[float]]:
+        """Read only the latest partition tail — O(1) file read for status probes."""
+        parquet_root = self._base / "raw" / instrument.value / timeframe.value
+        if not parquet_root.exists():
+            return None, None
+        files = sorted(parquet_root.glob("*.parquet"))
+        if not files:
+            return None, None
+        try:
+            chunk = pd.read_parquet(files[-1])
+            chunk.index = pd.to_datetime(chunk.index, utc=True)
+            if chunk.empty:
+                return None, None
+            last_ts = chunk.index[-1].to_pydatetime()
+            return last_ts, float(chunk.iloc[-1]["close"])
+        except Exception:
+            return None, None
+
     def list_ohlcv_range(
         self,
         instrument: Instrument,
@@ -243,15 +265,18 @@ class OHLCVMixin:
 
         first_ts: Optional[datetime] = None
         last_ts: Optional[datetime] = None
-        for f in files:
-            try:
-                chunk = pd.read_parquet(f)
-                chunk.index = pd.to_datetime(chunk.index, utc=True)
-                if not chunk.empty:
-                    if first_ts is None or chunk.index[0] < first_ts:
-                        first_ts = chunk.index[0].to_pydatetime()
-                    if last_ts is None or chunk.index[-1] > last_ts:
-                        last_ts = chunk.index[-1].to_pydatetime()
-            except Exception:
-                continue
+        try:
+            first_chunk = pd.read_parquet(files[0])
+            first_chunk.index = pd.to_datetime(first_chunk.index, utc=True)
+            if not first_chunk.empty:
+                first_ts = first_chunk.index[0].to_pydatetime()
+        except Exception:
+            pass
+        try:
+            last_chunk = pd.read_parquet(files[-1])
+            last_chunk.index = pd.to_datetime(last_chunk.index, utc=True)
+            if not last_chunk.empty:
+                last_ts = last_chunk.index[-1].to_pydatetime()
+        except Exception:
+            pass
         return first_ts, last_ts

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime
 from typing import Any, Optional
@@ -15,7 +16,7 @@ from src.data.feeds.base import OHLCVFeed
 from src.data.scheduler.fetcher import OHLCVFetcher
 from src.data.scheduler.live import LiveSchedulerMixin
 from src.data.scheduler.replay import ReplaySchedulerMixin
-from src.data.scheduler.store_ops import bars_from_store
+
 from src.data.scheduler.types import (
     BACKGROUND_POLL_INTERVAL_SEC,
     FOCUSED_POLL_INTERVAL_SEC,
@@ -79,6 +80,7 @@ class DataScheduler(ReplaySchedulerMixin, LiveSchedulerMixin):
         self._last_immediate_poll_mono: dict[
             tuple[Instrument, Timeframe], float
         ] = {}
+        self._poll_tasks: dict[Instrument, asyncio.Task[None]] = {}
 
     def stop(self) -> None:
         """Signal the live loop to stop after the current sleep."""
@@ -150,19 +152,13 @@ class DataScheduler(ReplaySchedulerMixin, LiveSchedulerMixin):
         existing = self._pair_status.get(key, {})
         if existing.get("last_bar_at"):
             return
-        try:
-            completed, active = bars_from_store(self._store, inst, tf)
-            latest = (
-                active
-                if active is not None and active.timestamp > completed.timestamp
-                else completed
-            )
+        last_ts, last_close = self._store.peek_latest_ohlcv(inst, tf)
+        if last_ts is not None:
             status = self._pair_status.setdefault(key, {})
-            status.setdefault("last_bar_at", latest.timestamp.isoformat())
-            status.setdefault("close", latest.close)
-            status.setdefault("source", latest.source)
-        except DataError:
-            pass
+            status.setdefault("last_bar_at", last_ts.isoformat())
+            if last_close is not None:
+                status.setdefault("close", last_close)
+            status.setdefault("source", "parquet_tail")
 
     def get_live_status(self) -> dict[str, Any]:
         """Return scheduler health for the terminal live-chart status UI."""

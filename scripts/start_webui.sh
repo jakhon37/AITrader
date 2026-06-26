@@ -1,6 +1,7 @@
 #!/bin/bash
-# AITrader Web UI Launcher — Docker env only; code bind-mounted from this repo.
+# AITrader launcher — Web UI + paper trading (single Docker stack).
 #
+# Paper trading (ExecutionEngine) runs inside the FastAPI backend lifespan.
 # Usage:
 #   ./scripts/start_webui.sh
 #
@@ -15,7 +16,7 @@ NC='\033[0m'
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}🚀 AITrader Web UI (Docker)${NC}"
+echo -e "${BLUE}🚀 AITrader — Web UI + Paper Trading (Docker)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
@@ -49,7 +50,7 @@ if [ "$HEALTHY" = false ]; then
 fi
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}✅ Web UI Running (Docker)${NC}"
+echo -e "${GREEN}✅ Web UI + paper engine running (Docker)${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"

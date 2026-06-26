@@ -79,3 +79,19 @@ def resample_higher_timeframes(
             store.write_ohlcv(instrument, tf, resampled)
             total += len(resampled)
     return total
+
+
+def resample_fast_timeframes_recent(
+    store: DataStore,
+    instrument: Instrument,
+    *,
+    months: list[str] | None = None,
+) -> int:
+    """Rebuild M5–H1 partitions from stored M1 for the given months (force overwrite)."""
+    return resample_higher_timeframes(
+        store,
+        instrument,
+        months=months,
+        force=True,
+        targets=list(_FAST_RESAMPLE_TFS),
+    )

@@ -14,7 +14,9 @@ from src.core.exceptions import DataError
 from src.core.logging import get_logger
 from src.core.poll_schedule import compute_live_poll_interval, m1_cache_ttl_sec
 from src.data.feeds.dukascopy import DukascopyFeed
+from src.data.feeds.lock import DUKASCOPY_EXECUTOR
 from src.data.scheduler.bars import normalize_wick
+from src.data.pipeline.resample import resample_fast_timeframes_recent
 from src.data.scheduler.store_ops import (
     bars_from_store,
     save_bar_to_store,
@@ -55,7 +57,7 @@ class LiveSchedulerMixin:
         self._last_immediate_poll_mono[pair] = now_mono
         poll_at = datetime.now(timezone.utc)
         self._last_global_poll_at = poll_at
-        await self._poll_instrument(instrument, [timeframe], light=light)
+        self._schedule_poll(instrument, [timeframe], light=light)
 
     async def run(self: DataScheduler) -> None:
         """Start the live scheduling loop.  Blocks until ``stop()`` is called."""
@@ -133,10 +135,42 @@ class LiveSchedulerMixin:
             if due_by_instrument:
                 self._last_global_poll_at = now_utc
                 for instrument, timeframes in due_by_instrument.items():
-                    await self._poll_instrument(instrument, timeframes)
+                    self._schedule_poll(instrument, timeframes)
 
             max_sleep = 5.0 if self._focused_pair is not None else 30.0
             await asyncio.sleep(max(0.5, min(next_wake_sec, max_sleep)))
+
+    def _schedule_poll(
+        self: DataScheduler,
+        instrument: Instrument,
+        timeframes: list[Timeframe],
+        *,
+        light: bool = False,
+    ) -> None:
+        """Fire a background poll — never blocks the live loop or API."""
+        existing = self._poll_tasks.get(instrument)
+        if existing is not None and not existing.done():
+            return
+        self._poll_tasks[instrument] = asyncio.create_task(
+            self._poll_instrument_guarded(instrument, timeframes, light=light),
+            name=f"dukascopy-poll-{instrument.value}",
+        )
+
+    async def _poll_instrument_guarded(
+        self: DataScheduler,
+        instrument: Instrument,
+        timeframes: list[Timeframe],
+        *,
+        light: bool = False,
+    ) -> None:
+        try:
+            await self._poll_instrument(instrument, timeframes, light=light)
+        except Exception as exc:
+            _log.warning(
+                "scheduler_poll_task_failed",
+                instrument=instrument.value,
+                error=str(exc),
+            )
 
     async def _poll_instrument(
         self: DataScheduler,
@@ -150,20 +184,22 @@ class LiveSchedulerMixin:
         feed = getattr(self._fetcher, "_feed", None)
         m1_df: Optional[pd.DataFrame] = None
 
-        needs_m1 = (
-            not light
-            or any(tf in M1_LIVE_DERIVED_TFS for tf in timeframes)
+        # Full (non-light) polls always fetch M1 so Parquet + resampled TFs stay current
+        # even when active_pairs are H1-only bootstrap pairs.
+        fetch_m1_window = not light or any(
+            tf in M1_LIVE_DERIVED_TFS for tf in timeframes
         )
-        if isinstance(feed, DukascopyFeed) and needs_m1:
+        if isinstance(feed, DukascopyFeed) and fetch_m1_window:
             try:
                 min_interval = min(
                     self._poll_interval_for(instrument, tf, poll_at) for tf in timeframes
                 )
                 cache_ttl = m1_cache_ttl_sec(min_interval)
-                lookback_hours = LIGHT_M1_LOOKBACK_HOURS if light else None
-                executor = asyncio.get_running_loop()
-                m1_df = await executor.run_in_executor(
-                    None,
+                # Short window avoids multi-day Dukascopy timeouts; sync_m1 fills gaps from store tail.
+                lookback_hours = LIGHT_M1_LOOKBACK_HOURS
+                loop = asyncio.get_running_loop()
+                m1_df = await loop.run_in_executor(
+                    DUKASCOPY_EXECUTOR,
                     lambda: feed.fetch_m1_recent(
                         instrument,
                         max_cache_age_sec=cache_ttl,
@@ -177,6 +213,22 @@ class LiveSchedulerMixin:
                     error=str(exc),
                 )
 
+        m1_synced = False
+        if not light and m1_df is not None and not m1_df.empty:
+            sync_m1_window_to_store(self._store, instrument, m1_df, poll_at)
+            m1_synced = True
+            months = sorted({ts.strftime("%Y-%m") for ts in m1_df.index})
+            try:
+                resample_fast_timeframes_recent(
+                    self._store, instrument, months=months
+                )
+            except Exception as exc:
+                _log.warning(
+                    "scheduler_resample_failed",
+                    instrument=instrument.value,
+                    error=str(exc),
+                )
+
         for timeframe in timeframes:
             await self._poll_pair(
                 instrument,
@@ -184,6 +236,7 @@ class LiveSchedulerMixin:
                 poll_at=poll_at,
                 m1_df=m1_df,
                 light=light,
+                m1_synced=m1_synced,
             )
 
     async def _poll_pair(
@@ -194,6 +247,7 @@ class LiveSchedulerMixin:
         poll_at: Optional[datetime] = None,
         m1_df: Optional[pd.DataFrame] = None,
         light: bool = False,
+        m1_synced: bool = False,
     ) -> None:
         """Fetch and publish bars for a single instrument/timeframe pair."""
         pair_key = self._pair_key(instrument, timeframe)
@@ -237,23 +291,13 @@ class LiveSchedulerMixin:
                 completed_bar = self._fetcher.fetch_latest_bar(instrument, timeframe)
                 active_bar = None
 
-            synced_m1 = False
-            if (
-                not light
-                and timeframe == Timeframe.M1
-                and m1_df is not None
-                and not m1_df.empty
-            ):
-                sync_m1_window_to_store(self._store, instrument, m1_df, poll_at)
-                synced_m1 = True
-
             await self._emit_bars(
                 instrument,
                 timeframe,
                 completed_bar,
                 active_bar,
                 poll_at,
-                persist_completed=not synced_m1,
+                persist_completed=not (m1_synced and timeframe == Timeframe.M1),
             )
 
         except Exception as exc:
@@ -304,7 +348,7 @@ class LiveSchedulerMixin:
         pair_key = self._pair_key(instrument, timeframe)
         last = self._last_emitted.get((instrument, timeframe))
         if last is None or completed_bar.timestamp > last:
-            if persist_completed and timeframe == Timeframe.M1:
+            if persist_completed:
                 save_bar_to_store(self._store, instrument, timeframe, completed_bar)
             await self._bus.publish(BusChannel.OHLCV_BAR, completed_bar)
             self._last_emitted[(instrument, timeframe)] = completed_bar.timestamp

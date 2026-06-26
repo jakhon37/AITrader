@@ -16,6 +16,7 @@ import httpx
 from src.core.clock import now
 from src.core.contracts import Direction, EconomicEvent, Instrument
 from src.core.logging import get_logger
+from src.fundamental.text_utils import sanitize_llm_narrative
 
 _log = get_logger("D03-FUNDAMENTAL")
 
@@ -148,6 +149,18 @@ class NarrativeSynthesizer:
 
         return self._model
 
+    def budget_snapshot(self) -> tuple[float, float]:
+        """Return (spent_today, daily_cap) for status reporting."""
+        return self._daily_spend, self.budget_cap
+
+    def budget_available(self) -> bool:
+        """True when today's OpenRouter spend is below the configured cap."""
+        return self._update_and_check_budget()
+
+    def cached_model_id(self) -> Optional[str]:
+        """Last selected model id, if any (may be stale until next LLM call)."""
+        return self._model
+
     def _update_and_check_budget(self) -> bool:
         """Reset budget daily and check if budget has been exceeded."""
         today = now().date()
@@ -219,7 +232,13 @@ class NarrativeSynthesizer:
                 payload = {
                     "model": current_model,
                     "messages": [
-                        {"role": "system", "content": "You provide short, professional financial insights."},
+                        {
+                            "role": "system",
+                            "content": (
+                                "You provide short, professional financial insights. "
+                                "Plain text only — no markdown, no asterisks, no bullet lists."
+                            ),
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.3,
@@ -235,7 +254,9 @@ class NarrativeSynthesizer:
 
                 if response.status_code == 200:
                     data = response.json()
-                    content = data["choices"][0]["message"]["content"].strip()
+                    content = sanitize_llm_narrative(
+                        data["choices"][0]["message"]["content"].strip()
+                    )
                     self._daily_spend += self._cost_per_call
                     _log.debug("synthesizer_api_success", spend=self._daily_spend, model=current_model)
                     return content
@@ -320,7 +341,10 @@ class NarrativeSynthesizer:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You provide concise, actionable pre-event macro briefings.",
+                            "content": (
+                                "You provide concise, actionable pre-event macro briefings. "
+                                "Plain text only — no markdown, no asterisks, no bullet lists."
+                            ),
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -336,7 +360,9 @@ class NarrativeSynthesizer:
 
                 if response.status_code == 200:
                     data = response.json()
-                    content = data["choices"][0]["message"]["content"].strip()
+                    content = sanitize_llm_narrative(
+                        data["choices"][0]["message"]["content"].strip()
+                    )
                     self._daily_spend += self._cost_per_call
                     return content
 

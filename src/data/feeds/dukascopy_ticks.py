@@ -69,11 +69,16 @@ def fetch_today_m1_from_ticks(
     download_hour,
     *,
     now: datetime | None = None,
+    max_hours: int | None = None,
 ) -> pd.DataFrame:
-    """Fetch all available tick hours for the current UTC day and return M1 bars."""
+    """Fetch tick hours for the current UTC day and return M1 bars."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     chunks: list[pd.DataFrame] = []
-    for hour in range(now.hour + 1):
+    hour_end = now.hour + 1
+    hour_start = 0
+    if max_hours is not None and max_hours > 0:
+        hour_start = max(0, hour_end - max_hours)
+    for hour in range(hour_start, hour_end):
         hour_df = download_hour(now.year, now.month, now.day, hour)
         if hour_df is not None and not hour_df.empty:
             chunks.append(hour_df)

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core.clock import now
 from src.core.config import AppConfig, InstrumentConfig, load_instruments
+from src.core.instruments import get_enabled_instruments
 from src.core.contracts import (
     BusChannel,
     Direction,
@@ -91,6 +92,16 @@ class FundamentalAgent:
         self._poll_interval: int = 600
         self._last_poll_time = now() - timedelta(minutes=15)
 
+    async def get_openrouter_status(self) -> Any:
+        """OpenRouter narrative + sentiment model status for /status reporting."""
+        from src.fundamental.openrouter_status import build_openrouter_status
+
+        return await build_openrouter_status(
+            self.config,
+            self.synthesizer,
+            self.sentiment_scorer,
+        )
+
     async def start(self) -> None:
         """Start the agent background loop and event subscriptions."""
         if self._running:
@@ -123,6 +134,57 @@ class FundamentalAgent:
 
         await self.bus.unsubscribe(BusChannel.ECONOMIC_EVENT, self.handle_economic_event)
         _log.info("fundamental_agent_stopped")
+
+    async def publish_dev_bootstrap(self) -> list[FundamentalSignal]:
+        """Seed dev /fundamental cache with mock signals for each enabled instrument.
+
+        Call after NotifierService subscribes to FUNDAMENTAL_SIGNAL. Returns the
+        published signals so the notifier can seed its command cache directly.
+        """
+        fund_cfg = getattr(self.config, "fundamental", None)
+        if self.config.env != "dev":
+            return []
+        if fund_cfg is None or not getattr(fund_cfg, "dev_bootstrap_signals", False):
+            return []
+
+        current_time = now()
+        signals: list[FundamentalSignal] = []
+        for instrument in get_enabled_instruments(self.config):
+            inst_config = self.instrument_configs.get(instrument)
+            if not inst_config:
+                inst_config = InstrumentConfig(
+                    pip_size=0.0001,
+                    lot_size=100000,
+                    session_hours={"open": "22:00", "close": "22:00"},
+                    active_timeframes=[],
+                    primary_timeframe=Timeframe.H1,
+                )
+            decay_hours = get_decay_hours(FundamentalEventType.MARKET_RISK, inst_config)
+            valid_until = compute_valid_until(FundamentalEventType.MARKET_RISK, inst_config, current_time)
+            signal = FundamentalSignal(
+                signal_id=new_signal_id(),
+                instrument=instrument,
+                timestamp=current_time,
+                valid_until=valid_until,
+                direction=Direction.NEUTRAL,
+                confidence=0.35,
+                strength=SignalStrength.WEAK,
+                sentiment_score=0.0,
+                event_type=FundamentalEventType.MARKET_RISK,
+                source_headline=f"Dev bootstrap: no live news yet for {instrument.value}",
+                source_url=None,
+                decay_hours=decay_hours,
+                narrative="Mock fundamental placeholder until news poll publishes a scored article.",
+                triggering_event=None,
+            )
+            signals.append(signal)
+            await self.bus.publish(BusChannel.FUNDAMENTAL_SIGNAL, signal)
+
+        _log.info(
+            "fundamental_dev_bootstrap_published",
+            instruments=[s.instrument.value for s in signals],
+        )
+        return signals
 
     async def _poll_loop(self) -> None:
         """Infinite polling loop checking news database every 10 minutes (Path 1)."""

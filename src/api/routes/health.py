@@ -54,6 +54,26 @@ async def get_health() -> Dict[str, Any]:
     }
 
 
+@router.get("/ops")
+async def get_ops_health(request: Request) -> dict[str, object]:
+    """D11-OPS: Latest probe snapshot from the background monitor."""
+    monitor = getattr(request.app.state, "ops_monitor", None)
+    if monitor is None:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "unknown",
+            "message": "Ops monitor not running",
+        }
+    snapshot = monitor.get_snapshot()
+    if not snapshot:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "pending",
+            "message": "First probe cycle not complete yet",
+        }
+    return snapshot
+
+
 @router.get("/pipeline")
 async def get_pipeline_health(request: Request) -> dict[str, object]:
     """D11-OPS: Live pipeline component status for ops dashboards."""

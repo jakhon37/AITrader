@@ -23,16 +23,16 @@ AITrader supports multiple timeframes for data analysis and trading, from 1-minu
 
 ```bash
 # 5-minute scalping
-./scripts/start_paper.sh --timeframe 5m --interval 300
+./scripts/start_webui.sh --timeframe 5m --interval 300
 
 # 1-hour swing trading
-./scripts/start_paper.sh --timeframe 1h --interval 3600
+./scripts/start_webui.sh --timeframe 1h --interval 3600
 
 # 4-hour position trading
-./scripts/start_paper.sh --timeframe 4h --interval 14400
+./scripts/start_webui.sh --timeframe 4h --interval 14400
 
 # Daily analysis (default)
-./scripts/start_paper.sh --timeframe 1d --interval 3600
+./scripts/start_webui.sh --timeframe 1d --interval 3600
 ```
 
 ### Using Python Directly
@@ -242,7 +242,7 @@ This is accurate and widely used in trading platforms.
 ### 5-Minute Scalping Strategy
 ```bash
 # Fast scalping on EUR/USD
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 5m \
     --interval 300 \
     --symbols eurusd \
@@ -256,7 +256,7 @@ This is accurate and widely used in trading platforms.
 ### 1-Hour Swing Intraday
 ```bash
 # Swing trade major Forex pairs
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 1h \
     --interval 3600 \
     --symbols eurusd gbpusd usdjpy \
@@ -270,7 +270,7 @@ This is accurate and widely used in trading platforms.
 ### 4-Hour Position Trading
 ```bash
 # Position trade with lower frequency
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 4h \
     --interval 14400 \
     --symbols eurusd gold \
@@ -284,7 +284,7 @@ This is accurate and widely used in trading platforms.
 ### Daily Swing Trading (Default)
 ```bash
 # Classic swing trading
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 1d \
     --interval 3600 \
     --symbols eurusd gbpusd gold \
@@ -395,21 +395,21 @@ The dashboards automatically adapt to your chosen timeframe.
 
 ```bash
 # Beginner-friendly: Daily swing trading
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 1d \
     --interval 3600 \
     --symbols eurusd \
     --capital 100000
 
 # Intermediate: 1-hour intraday
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 1h \
     --interval 3600 \
     --symbols eurusd gbpusd \
     --capital 50000
 
 # Advanced: 5-minute scalping
-./scripts/start_paper.sh \
+./scripts/start_webui.sh \
     --timeframe 5m \
     --interval 300 \
     --symbols eurusd \

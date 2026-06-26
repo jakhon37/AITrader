@@ -6,7 +6,9 @@ interface HealthStatus { status: string; divisions: Record<string, HealthDiv>; }
 
 interface SignalsStore {
   tradeSignals: TradeSignal[];
+  tradeByInstrument: Record<string, TradeSignal>;
   fundamentalSignals: FundamentalSignal[];
+  fundamentalByInstrument: Record<string, FundamentalSignal>;
   technicalByInstrument: Record<string, TechnicalSignal>;
   healthStatus: HealthStatus;
   wsConnected: boolean;
@@ -51,16 +53,47 @@ function prependUnique<T extends { signal_id?: string }>(items: T[], incoming: T
   return [incoming, ...without].slice(0, MAX_SIGNALS);
 }
 
+function latestByInstrument<T extends { instrument: string | { value?: string } }>(
+  signals: T[],
+): Record<string, T> {
+  const map: Record<string, T> = {};
+  for (const sig of [...signals].reverse()) {
+    const key = instrumentKey(sig.instrument as string | { value?: string });
+    if (key) {
+      map[key] = sig;
+    }
+  }
+  return map;
+}
+
 export const useSignalsStore = create<SignalsStore>((set) => ({
   tradeSignals: [],
+  tradeByInstrument: {},
   fundamentalSignals: [],
+  fundamentalByInstrument: {},
   technicalByInstrument: {},
   healthStatus: { status: 'ok', divisions: {} },
   wsConnected: false,
   addTradeSignal: (s) =>
-    set((state) => ({ tradeSignals: prependUnique(state.tradeSignals, s) })),
+    set((state) => {
+      const key = instrumentKey(s.instrument as string | { value?: string });
+      return {
+        tradeSignals: prependUnique(state.tradeSignals, s),
+        tradeByInstrument: key
+          ? { ...state.tradeByInstrument, [key]: s }
+          : state.tradeByInstrument,
+      };
+    }),
   addFundamentalSignal: (s) =>
-    set((state) => ({ fundamentalSignals: prependUnique(state.fundamentalSignals, s) })),
+    set((state) => {
+      const key = instrumentKey(s.instrument as string | { value?: string });
+      return {
+        fundamentalSignals: prependUnique(state.fundamentalSignals, s),
+        fundamentalByInstrument: key
+          ? { ...state.fundamentalByInstrument, [key]: s }
+          : state.fundamentalByInstrument,
+      };
+    }),
   setTechnicalSignal: (s) =>
     set((state) => {
       const key = instrumentKey(s.instrument as string | { value?: string });
@@ -78,9 +111,16 @@ export const useSignalsStore = create<SignalsStore>((set) => ({
     }
     return { healthStatus: { status, divisions } };
   }),
-  initTradeSignals: (signals) =>
-    set({ tradeSignals: dedupeBySignalId(signals).slice(0, MAX_SIGNALS) }),
-  initFundamentalSignals: (signals) =>
-    set({ fundamentalSignals: dedupeBySignalId(signals).slice(0, MAX_SIGNALS) }),
+  initTradeSignals: (signals) => {
+    const tradeSignals = dedupeBySignalId(signals).slice(0, MAX_SIGNALS);
+    set({ tradeSignals, tradeByInstrument: latestByInstrument(tradeSignals) });
+  },
+  initFundamentalSignals: (signals) => {
+    const fundamentalSignals = dedupeBySignalId(signals).slice(0, MAX_SIGNALS);
+    set({
+      fundamentalSignals,
+      fundamentalByInstrument: latestByInstrument(fundamentalSignals),
+    });
+  },
   setWsConnected: (connected) => set({ wsConnected: connected }),
 }));

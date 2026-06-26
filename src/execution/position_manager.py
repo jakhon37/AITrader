@@ -7,7 +7,10 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from src.execution.store import ExecutionStore
 
 from src.core.bus import Bus
 from src.core.clock import now
@@ -33,6 +36,7 @@ class PositionManager:
         bus: Optional[Bus] = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         state_file: str = "data/state/positions.json",
+        store: Optional["ExecutionStore"] = None,
     ):
         """Initialize position manager."""
         self.initial_capital = initial_capital
@@ -40,6 +44,7 @@ class PositionManager:
         self.bus = bus
         self.execution_mode = execution_mode
         self.state_file = state_file
+        self.store = store
 
         self.positions: Dict[Instrument, PositionSummary] = {}
         self.sl_tp: Dict[Instrument, Tuple[Optional[float], Optional[float]]] = {}
@@ -244,6 +249,19 @@ class PositionManager:
                 f"PnL=${pnl:,.2f}"
             )
 
+            if self.store is not None:
+                self.store.record_closed_trade(
+                    signal_id=signal_id,
+                    instrument=instrument,
+                    side=position.side,
+                    size=position.size,
+                    entry_price=position.entry_price,
+                    exit_price=exit_price,
+                    realized_pnl=pnl,
+                    opened_at=position.open_since,
+                    closed_at=exit_time or now(),
+                )
+
             await self._publish_portfolio_state(signal_id)
             return pnl
 
@@ -339,38 +357,30 @@ class PositionManager:
                 drawdown_pct=drawdown_pct,
             )
 
-    async def _publish_portfolio_state(self, signal_id: str) -> None:
+    async def publish_current_state(self, signal_id: str) -> PortfolioState:
+        """Build, persist, and publish the current portfolio snapshot."""
+        state = await self.get_portfolio_state(signal_id)
+        await self._publish_portfolio_state(signal_id, state=state)
+        return state
+
+    async def _publish_portfolio_state(
+        self,
+        signal_id: str,
+        *,
+        state: Optional[PortfolioState] = None,
+    ) -> None:
         """Publish updated PortfolioState to the message bus."""
-        if self.bus:
-            # We can't acquire the lock again, so we call internal calculation
-            total_unrealized = sum(pos.unrealized_pnl for pos in self.positions.values())
-            total_exposure = sum(pos.size * self._get_lot_size(pos.instrument) * pos.current_price for pos in self.positions.values())
-            equity = self.cash + total_exposure + total_unrealized
+        if state is None:
+            state = await self.get_portfolio_state(signal_id)
 
-            if equity > self.peak_equity:
-                self.peak_equity = equity
-
-            drawdown_pct = 0.0
-            if self.peak_equity > 0:
-                drawdown_pct = (self.peak_equity - equity) / self.peak_equity
-
-            margin_used = total_exposure
-            free_margin = equity - margin_used
-            self._check_daily_reset()
-
-            state = PortfolioState(
-                signal_id=signal_id,
-                timestamp=now(),
-                execution_mode=self.execution_mode,
-                balance=self.cash,
-                equity=equity,
-                margin_used=margin_used,
-                free_margin=free_margin,
-                open_positions=list(self.positions.values()),
-                realized_pnl_today=self.realized_pnl_today,
-                drawdown_pct=drawdown_pct,
+        if self.store is not None:
+            self.store.save_portfolio_snapshot(
+                state,
+                initial_capital=self.initial_capital,
+                total_realized_pnl=self.total_realized_pnl,
             )
 
+        if self.bus:
             await self.bus.publish(BusChannel.PORTFOLIO_UPDATE, state)
 
     def get_num_positions(self) -> int:

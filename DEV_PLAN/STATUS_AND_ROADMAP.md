@@ -93,7 +93,7 @@ Dukascopy → DataStore → Chart API
 | Telegram group chat 400 | Add bot as admin with Post Messages, or use DM-only `TELEGRAM_CHAT_ID` |
 | Calendar empty | Forex Factory scrape may return 0 events; wait for hourly poll |
 | Backend code changes | `docker restart aitrader-webui-backend` (no hot-reload) |
-| 2-week paper soak | `./scripts/start_paper.sh` — not yet run to completion |
+| 2-week paper soak | `./scripts/start_webui.sh` — not yet run to completion |
 
 ---
 

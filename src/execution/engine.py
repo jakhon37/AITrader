@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -35,6 +36,7 @@ from src.execution.circuit_breaker import CircuitBreaker, HaltReason
 from src.execution.mode_gate import ModeGate
 from src.execution.position_manager import PositionManager
 from src.execution.risk_manager import RiskManager
+from src.execution.store import ExecutionStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,21 +85,28 @@ class ExecutionEngine:
                 enable_risk_checks=True,
                 enable_circuit_breaker=True,
                 enable_audit_log=True,
-                dry_run=(self.app_config.core.execution_mode == ExecutionMode.PAPER and self.app_config.env == "dev"),
+                # SimBroker is paper-safe; dry_run=False so dev paper soak actually simulates fills.
+                dry_run=False,
             )
 
         # Initialize sub-components
         self.mode_gate = ModeGate(self.app_config)
         self.risk_manager = RiskManager(config=self.app_config.risk, env=self.app_config.env)
         self.circuit_breaker = CircuitBreaker(initial_capital=self.config.initial_capital)
-        # Configure state_file path relative to the active data directory
-        state_file_path = str(Path(self.app_config.data.data_dir) / "state" / "positions.json")
+        # Configure state paths relative to the active data directory
+        data_dir = Path(self.app_config.data.data_dir)
+        state_dir = data_dir / "state"
+        db_path = self._resolve_execution_db_path(state_dir)
+        state_file_path = str(state_dir / "positions.json")
+        self.execution_store = ExecutionStore(db_path)
+        self.execution_store.import_legacy_positions_json(state_file_path)
 
         self.position_manager = PositionManager(
             initial_capital=self.config.initial_capital,
             bus=self.bus,
             execution_mode=self.app_config.core.execution_mode,
             state_file=state_file_path,
+            store=self.execution_store,
         )
 
         broker_type = getattr(self.config, 'broker', 'mock')
@@ -135,6 +144,27 @@ class ExecutionEngine:
             f"dry_run={self.config.dry_run}"
         )
 
+    @staticmethod
+    def _resolve_execution_db_path(state_dir: Path) -> Path:
+        """Pick a writable SQLite path (CI mounts data/ read-only)."""
+        preferred = state_dir / "execution.db"
+        if os.environ.get("AITRADER_TESTING") == "1":
+            return Path("/tmp/aitrader-execution-test.db")
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            probe = state_dir / ".write_probe"
+            probe.touch()
+            probe.unlink()
+            return preferred
+        except OSError:
+            fallback = Path("/tmp/aitrader-execution.db")
+            logger.warning(
+                "execution_db_readonly_fallback preferred=%s fallback=%s",
+                preferred,
+                fallback,
+            )
+            return fallback
+
     def _run_async(self, coro):
         """Helper to run async coroutines synchronously if event loop is not running."""
         try:
@@ -162,6 +192,47 @@ class ExecutionEngine:
 
         if self.bus:
             self._run_async(self._subscribe_channels())
+
+    async def seed_portfolio_state(self) -> None:
+        """Publish and persist initial portfolio so notifier/API have state after restart."""
+        await self.position_manager.publish_current_state("startup")
+
+    async def _notify_execution_skip(self, signal: TradeSignal, reason: str) -> None:
+        """Publish a rejected OrderEvent so Telegram explains why no trade was placed."""
+        if not self.bus:
+            return
+        side = signal.suggested_side or OrderSide.BUY
+        order = Order(
+            order_id=str(uuid4()),
+            signal_id=signal.signal_id,
+            instrument=signal.instrument,
+            side=side,
+            size=signal.suggested_size or 0.0,
+            order_type="market",
+            limit_price=None,
+            stop_price=None,
+            sl=signal.suggested_sl,
+            tp=signal.suggested_tp,
+            status=OrderStatus.REJECTED,
+            created_at=now(),
+            filled_at=None,
+            filled_price=None,
+            execution_mode=self.app_config.core.execution_mode,
+        )
+        event = OrderEvent(
+            signal_id=signal.signal_id,
+            event_type="rejected",
+            order=order,
+            timestamp=now(),
+            detail=reason,
+        )
+        await self.bus.publish(BusChannel.ORDER_EVENT, event)
+        if self.audit_log:
+            self.audit_log.log_risk_violation(
+                violation_type="execution_skipped",
+                details=reason,
+                signal_id=signal.signal_id,
+            )
 
     async def _subscribe_channels(self) -> None:
         """Subscribe to message bus channels."""
@@ -284,6 +355,7 @@ class ExecutionEngine:
             logger.error(f"Mode gate validation failed: {e}")
             if self.audit_log:
                 self.audit_log.log_error("mode_gate_failed", str(e), signal.signal_id)
+            await self._notify_execution_skip(signal, f"Mode gate blocked: {e}")
             return
 
         # 2. Circuit Breaker Check
@@ -293,10 +365,15 @@ class ExecutionEngine:
             if cb_reason:
                 self.circuit_breaker.halt(cb_reason, f"Circuit breaker halt trigger")
             self._last_action = "halted"
+            reason = f"Circuit breaker halt: {cb_reason.value if cb_reason else 'limit breached'}"
+            await self._notify_execution_skip(signal, reason)
             return
 
         if not self.circuit_breaker.is_trading_allowed(instrument):
             self._last_action = "halted"
+            await self._notify_execution_skip(
+                signal, f"Trading halted for {instrument.value} (circuit breaker active)"
+            )
             return
 
         # 3. Log signal receipt
@@ -317,6 +394,9 @@ class ExecutionEngine:
                 if self.config.dry_run:
                     logger.info(f"DRY RUN: Close position on {instrument.value}")
                     self._last_action = "closed"
+                    await self._notify_execution_skip(
+                        signal, f"Dry-run mode: close not submitted for {instrument.value}"
+                    )
                     return
 
                 order = Order(
@@ -343,6 +423,9 @@ class ExecutionEngine:
         # If position already exists, ignore opening a duplicate
         if self.position_manager.has_position(instrument):
             logger.debug(f"Position already exists for {instrument.value}")
+            await self._notify_execution_skip(
+                signal, f"Position already open for {instrument.value} — duplicate entry skipped"
+            )
             return
 
         # 4. Risk Manager Validation
@@ -350,23 +433,26 @@ class ExecutionEngine:
         inst_config = self.instruments_config.get(instrument)
         if not inst_config:
             logger.warning(f"No config for {instrument.value}, skipping risk checks")
+            await self._notify_execution_skip(
+                signal, f"No instrument config for {instrument.value}"
+            )
             return
 
         decision = self.risk_manager.validate(signal, portfolio, inst_config)
         if not decision.approved:
             logger.warning(f"Risk checks rejected order: {decision.reason}")
-            if self.audit_log:
-                self.audit_log.log_risk_violation(
-                    violation_type="risk_limit_exceeded",
-                    details=decision.reason or "Unknown rejection",
-                    signal_id=signal.signal_id,
-                )
+            await self._notify_execution_skip(
+                signal, f"Risk rejected: {decision.reason or 'limit exceeded'}"
+            )
             return
 
         # Check dry run for opening
         if self.config.dry_run:
             logger.info(f"DRY RUN: Open position on {instrument.value}")
             self._last_action = "opened"
+            await self._notify_execution_skip(
+                signal, f"Dry-run mode: open not submitted for {instrument.value}"
+            )
             return
 
         # 5. Build and submit Order
@@ -410,6 +496,8 @@ class ExecutionEngine:
 
         if self.bus:
             await self.bus.publish(BusChannel.ORDER_EVENT, event)
+
+        self.execution_store.save_order_event(event)
 
         if event.event_type == "filled":
             if self.audit_log:

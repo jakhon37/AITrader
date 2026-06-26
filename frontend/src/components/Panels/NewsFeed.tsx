@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Globe, ChevronDown, ChevronUp, Clock, Zap } from 'lucide-react';
 import { getUpcomingCalendar } from '../../api/client';
+import { useChartTimezone } from '../../hooks/useChartTimezone';
 import { useSignalsStore } from '../../store/signals';
 import type { FundamentalSignal, UpcomingCalendarEvent } from '../../types';
+import { formatCalendarEventTime } from '../../utils/chartTimezone';
+import { plainTextFromLlm } from '../../utils/plainText';
 
 interface NewsFeedProps {
   isCollapsed?: boolean;
@@ -42,11 +45,6 @@ function formatCountdown(minutes: number) {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function formatReleaseTime(iso: string) {
-  const dt = new Date(iso);
-  return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
 function sentimentColor(score: number) {
   if (score >= 0.15) return 'var(--neon-green)';
   if (score <= -0.15) return 'var(--neon-red)';
@@ -65,6 +63,7 @@ function isUpcomingBriefing(sig: FundamentalSignal) {
 
 export function NewsFeed({ isCollapsed, onToggleCollapse }: NewsFeedProps) {
   const fundamentalSignals = useSignalsStore((s) => s.fundamentalSignals);
+  const { timezone, displayLabel } = useChartTimezone();
   const [upcoming, setUpcoming] = useState<UpcomingCalendarEvent[]>([]);
 
   useEffect(() => {
@@ -200,7 +199,8 @@ export function NewsFeed({ isCollapsed, onToggleCollapse }: NewsFeedProps) {
                       }}
                     >
                       <span>
-                        {formatReleaseTime(evt.timestamp)} UTC · {evt.instruments.join(', ') || '—'}
+                        {formatCalendarEventTime(evt.timestamp, timezone)} {displayLabel} ·{' '}
+                        {evt.instruments.join(', ') || '—'}
                       </span>
                       <span style={{ color: 'var(--neon-cyan)', fontWeight: 600 }}>
                         {formatCountdown(evt.minutes_until)}
@@ -213,7 +213,7 @@ export function NewsFeed({ isCollapsed, onToggleCollapse }: NewsFeedProps) {
                     )}
                     {briefing?.narrative && (
                       <p style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.45, margin: '6px 0 0' }}>
-                        {briefing.narrative}
+                        {plainTextFromLlm(briefing.narrative)}
                       </p>
                     )}
                   </div>
@@ -273,7 +273,7 @@ export function NewsFeed({ isCollapsed, onToggleCollapse }: NewsFeedProps) {
                   </p>
                   {sig.narrative && (
                     <p style={{ fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.45, margin: '4px 0 0' }}>
-                      {sig.narrative}
+                      {plainTextFromLlm(sig.narrative)}
                     </p>
                   )}
                 </div>

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from src.data.scheduler import DataScheduler
 from src.core.logging import get_logger
 from src.data.feeds.dukascopy import DukascopyFeed
+from src.data.feeds.lock import DUKASCOPY_EXECUTOR, dukascopy_lock_held
 from src.data.pipeline.refresh import refresh_all_enabled, refresh_slow_resample_all
 from src.data.store import DataStore
 
@@ -91,6 +92,12 @@ class DataRefreshWorker:
 
     def _should_defer_refresh(self) -> bool:
         """Yield Dukascopy lock to live intraday polls after startup / chart focus."""
+        if dukascopy_lock_held():
+            return True
+        if self._scheduler is not None:
+            poll_tasks = getattr(self._scheduler, "_poll_tasks", {})
+            if any(task is not None and not task.done() for task in poll_tasks.values()):
+                return True
         if self._scheduler is not None and self._scheduler.is_intraday_focused():
             return True
         if self._scheduler is not None:
@@ -120,7 +127,7 @@ class DataRefreshWorker:
             loop = asyncio.get_running_loop()
             if run_fast:
                 results = await loop.run_in_executor(
-                    None,
+                    DUKASCOPY_EXECUTOR,
                     lambda: refresh_all_enabled(
                         self._store, self._feed, self._cfg, mode="tail"
                     ),
@@ -132,7 +139,7 @@ class DataRefreshWorker:
 
             if run_slow:
                 slow_results = await loop.run_in_executor(
-                    None,
+                    DUKASCOPY_EXECUTOR,
                     lambda: refresh_slow_resample_all(self._store, self._cfg),
                 )
                 self._last_slow_rows = slow_results
@@ -146,8 +153,9 @@ class DataRefreshWorker:
             self._refresh_in_progress = False
 
     async def _run_tail_refresh(self) -> None:
-        """Backward-compatible entry for tests."""
-        self._last_fast_mono = 0.0
+        """Backward-compatible entry for tests and manual tail refresh."""
+        now_mono = time.monotonic()
+        self._last_fast_mono = now_mono - self._fast_interval_sec
         await self._run_due_jobs()
 
     def get_status(self) -> dict[str, Any]:

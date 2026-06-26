@@ -246,6 +246,10 @@ class FundamentalConfig(BaseModel):
         pattern="^(low|medium|high)$",
         description="Minimum impact for Telegram pre-release calendar alerts",
     )
+    dev_bootstrap_signals: bool = Field(
+        default=False,
+        description="In dev, publish seed FundamentalSignals on startup for /fundamental cache",
+    )
 
 
 # ── New D01 additions ─────────────────────────────────────────────────────────
@@ -292,6 +296,10 @@ class InstrumentConfig(BaseModel):
     max_position_lots:  float = Field(gt=0.0, default=1.0)
     news_halt_minutes:  int   = Field(ge=0, default=30)
     signal_decay:       SignalDecayConfig = Field(default_factory=SignalDecayConfig)
+    scalping_mode:      bool = Field(
+        default=False,
+        description="Use MT4-style scalping indicator stack in D04-TECHNICAL",
+    )
 
 
 class CoreConfig(BaseModel):

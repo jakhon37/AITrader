@@ -17,6 +17,7 @@ router = APIRouter(prefix="/data", tags=["data"])
 
 
 from src.data.feeds.dukascopy import DukascopyFeed
+from src.data.feeds.lock import DUKASCOPY_EXECUTOR
 
 _TF_STEP = {
     Timeframe.M1:  timedelta(minutes=1),
@@ -121,7 +122,7 @@ async def fill_data_gaps(
     try:
         loop = asyncio.get_event_loop()
         df = await loop.run_in_executor(
-            None,
+            DUKASCOPY_EXECUTOR,
             lambda: duka.fetch_range(
                 instrument,
                 timeframe,
@@ -323,6 +324,8 @@ async def get_ohlcv(
 @router.get("/live-status")
 async def get_live_status(request: Request) -> Dict[str, Any]:
     """Return DataScheduler health for the terminal live-chart status UI."""
+    import asyncio
+
     scheduler = getattr(request.app.state, "scheduler", None)
     if not scheduler:
         raise HTTPException(status_code=500, detail="Scheduler not initialized.")

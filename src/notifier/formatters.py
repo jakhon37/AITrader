@@ -88,6 +88,9 @@ def format_order_event(event: OrderEvent) -> str:
     lines.append(f"<b>SL:</b> {order.sl or 'None'} | <b>TP:</b> {order.tp or 'None'}")
     lines.append(f"<b>ID:</b> ...{sig_suffix} ({order.execution_mode.value})")
 
+    if event.detail:
+        lines.append(f"<b>Reason:</b> {event.detail}")
+
     return "\n".join(lines)
 
 

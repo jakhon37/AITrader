@@ -42,6 +42,7 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
   const initFundamentalSignals = useSignalsStore((state) => state.initFundamentalSignals);
   const setTechnicalSignal = useSignalsStore((state) => state.setTechnicalSignal);
   const addTradeSignal = useSignalsStore((state) => state.addTradeSignal);
+  const addFundamentalSignal = useSignalsStore((state) => state.addFundamentalSignal);
   const { timezone, setTimezone, displayLabel } = useChartTimezone();
   const liveStatus = useLiveChartStatus(instrument, timeframe, connected);
   usePortfolio();
@@ -75,9 +76,10 @@ export function TradingTerminal({ sidebarHidden }: TradingTerminalProps) {
       .then((payload) => {
         if (payload?.technical) setTechnicalSignal(payload.technical);
         if (payload?.trade) addTradeSignal(payload.trade);
+        if (payload?.fundamental) addFundamentalSignal(payload.fundamental);
       })
       .catch(() => {});
-  }, [instrument, setTechnicalSignal, addTradeSignal]);
+  }, [instrument, setTechnicalSignal, addTradeSignal, addFundamentalSignal]);
 
   useEffect(() => {
     getDataInstruments()

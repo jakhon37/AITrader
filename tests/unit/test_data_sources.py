@@ -335,6 +335,55 @@ class TestNewsFetcherHelpers:
         assert _is_relevant("Local sports team wins championship", None) is False
 
 
+# ── CalendarFetcher HTML parser ───────────────────────────────────────────────
+
+class TestCalendarParser:
+    def test_parse_ff_date_compact_format(self) -> None:
+        from src.data.sources.calendar import _parse_ff_date
+
+        parsed = _parse_ff_date("FriJun 26", 2026)
+        assert parsed is not None
+        assert parsed.year == 2026
+        assert parsed.month == 6
+        assert parsed.day == 26
+
+    def test_parse_ff_date_legacy_format(self) -> None:
+        from src.data.sources.calendar import _parse_ff_date
+
+        parsed = _parse_ff_date("Fri Jun 26", 2026)
+        assert parsed is not None
+        assert parsed.day == 26
+
+    def test_parse_ff_html_parses_scheduled_row(self) -> None:
+        pytest.importorskip("bs4")
+        from unittest.mock import MagicMock
+        from src.data.sources.calendar import CalendarFetcher
+
+        html = """
+        <table class="calendar__table">
+          <tr class="calendar__row">
+            <td class="calendar__date">FriJun 26</td>
+            <td class="calendar__time">7:30am</td>
+            <td class="calendar__currency">USD</td>
+            <td class="calendar__impact"><span class="icon icon--ff-impact-yel"></span></td>
+            <td class="calendar__event"><span>Goods Trade Balance</span></td>
+            <td class="calendar__actual"></td>
+            <td class="calendar__forecast">-85.0B</td>
+            <td class="calendar__previous">-82.4B</td>
+          </tr>
+        </table>
+        """
+        clock = MagicMock()
+        clock.now.return_value = datetime(2026, 6, 26, 8, 0, tzinfo=timezone.utc)
+        fetcher = CalendarFetcher(MagicMock(), MagicMock(), clock)
+        events = fetcher._parse_ff_html(html)
+
+        assert len(events) == 1
+        assert events[0].name == "Goods Trade Balance"
+        assert events[0].impact == "medium"
+        assert "EURUSD" in events[0].instruments
+
+
 # ── FredFetcher: schema + query API ──────────────────────────────────────────
 
 class TestFredFetcher:

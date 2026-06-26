@@ -49,25 +49,21 @@ open http://localhost:5173
 open http://localhost:8000/docs
 ```
 
-### Paper Trading (CLI)
+### Paper Trading (Docker — same stack as Web UI)
 
 ```bash
-# Start paper trading with live data (default: daily timeframe)
-./scripts/start_paper.sh
+# Start Web UI + paper engine (single Docker stack)
+./scripts/start_webui.sh
 
-# Different timeframes
-./scripts/start_paper.sh --timeframe 5m --interval 300   # 5-min scalping
-./scripts/start_paper.sh --timeframe 1h --interval 3600  # 1-hour intraday
-./scripts/start_paper.sh --timeframe 4h --interval 14400 # 4-hour position
-
-# Stop services
-./scripts/stop_paper.sh
+# Stop
+./scripts/stop_webui.sh
 
 # Check status
 ./scripts/status_paper.sh
 ```
 
-**See [docs/TIMEFRAMES.md](docs/TIMEFRAMES.md) for complete timeframe guide.**
+Paper trading runs inside the backend container. Configure timeframes in `config/instruments.yaml`.
+**See [docs/TIMEFRAMES.md](docs/TIMEFRAMES.md) for timeframe notes.**
 
 ### Docker Development (🐳)
 

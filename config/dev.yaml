@@ -89,16 +89,17 @@ notifier:
       event_types: ["filled", "rejected"]
     system_health:
       enabled: true
-      min_status: "ok"
+      min_status: "degraded"   # heartbeats update /status cache; Telegram only on issues
 
 fundamental:
   # On Intel 16GB Mac dev machines, prefer "mock" or "openrouter" to avoid heavy FinBERT RAM/CPU usage.
   # Use "finbert" on GPU machines or when you want fully local high-quality scoring.
-  sentiment_backend: "mock"   # finbert | mock | openrouter
+  sentiment_backend: "openrouter"   # finbert | mock | openrouter
   poll_interval_seconds: 600
   aggregation_window_minutes: 15
-  min_confidence_to_emit: 0.25
+  min_confidence_to_emit: 0.15
   enable_structured_llm: true
   calendar_briefing_enabled: true
   calendar_min_impact: "medium"       # low | medium | high
-  calendar_telegram_min_impact: "high"
+  calendar_telegram_min_impact: "medium"
+  dev_bootstrap_signals: true

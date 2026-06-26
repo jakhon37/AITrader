@@ -16,7 +16,12 @@ async def get_portfolio_state(request: Request) -> Dict[str, Any]:
     """Get the current active portfolio state (cash, positions, margins)."""
     portfolio = state.latest_portfolio
 
-    # Fallback to execution engine query if no bus event has cached state yet
+    if not portfolio:
+        store = getattr(request.app.state, "execution_store", None)
+        if store is not None:
+            portfolio = store.get_latest_portfolio()
+
+    # Fallback to live execution engine query if store is empty
     if not portfolio:
         engine = getattr(request.app.state, "engine", None)
         if engine:
@@ -41,6 +46,20 @@ async def get_portfolio_state(request: Request) -> Dict[str, Any]:
 
 
 @router.get("/orders")
-async def get_orders() -> List[Dict[str, Any]]:
+async def get_orders(request: Request, limit: int = 50) -> List[Dict[str, Any]]:
     """Get order events history."""
-    return [evt.model_dump() for evt in state.order_event_history]
+    store = getattr(request.app.state, "execution_store", None)
+    if store is not None:
+        db_orders = store.list_order_events(limit=limit)
+        if db_orders:
+            return db_orders
+    return [evt.model_dump() for evt in state.order_event_history[-limit:]]
+
+
+@router.get("/trades")
+async def get_closed_trades(request: Request, limit: int = 50) -> List[Dict[str, Any]]:
+    """Get closed trade history from execution database."""
+    store = getattr(request.app.state, "execution_store", None)
+    if store is None:
+        return []
+    return store.list_closed_trades(limit=limit)

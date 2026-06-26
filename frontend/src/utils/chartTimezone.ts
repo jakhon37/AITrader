@@ -58,6 +58,42 @@ export function formatTimezoneShort(timezone: string): string {
   }
 }
 
+function calendarDayKey(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/** Format an ISO UTC timestamp for calendar panels using the chart timezone. */
+export function formatCalendarEventTime(iso: string, timezone: string): string {
+  const resolved = resolveChartTimezone(timezone);
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  const sameDay = calendarDayKey(date, resolved) === calendarDayKey(new Date(), resolved);
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: resolved,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  };
+  if (!sameDay) {
+    options.day = 'numeric';
+    options.month = 'short';
+  }
+
+  try {
+    return new Intl.DateTimeFormat('en-GB', options).format(date);
+  } catch {
+    return date.toISOString();
+  }
+}
+
 function timeToUnixSeconds(time: Time): number {
   if (typeof time === 'number') return time;
   if (typeof time === 'string') return Math.floor(new Date(time).getTime() / 1000);

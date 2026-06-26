@@ -48,7 +48,7 @@ execution:
 python scripts/train_intraday.py
 
 # Paper trade - uses config defaults
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 
 # Backtest - uses config defaults  
 python scripts/run_backtest.py
@@ -68,7 +68,7 @@ python scripts/run_backtest.py
 python scripts/train_intraday.py --symbol eurusd --timeframe 1d --epochs 100
 
 # Config says lstm_transformer, but use garch_gru
-./scripts/start_paper.sh --model garch_gru
+./scripts/start_webui.sh --model garch_gru
 
 # Override with different config file
 python scripts/train_intraday.py --config config/prod.yaml
@@ -107,7 +107,7 @@ vim config/dev.yaml  # Set btcusd, 1m, lstm_transformer, batch_size 256
 
 # Then just run
 python scripts/train_intraday.py
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 python scripts/run_backtest.py
 streamlit run dashboards/feature_explorer.py  # Auto-defaults to btcusd, 1m
 ```

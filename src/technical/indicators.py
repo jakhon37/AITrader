@@ -10,7 +10,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from src.core.contracts import Timeframe
+from src.core.config import InstrumentConfig
+from src.core.contracts import Instrument, Timeframe
 
 
 def compute_returns(
@@ -341,8 +342,37 @@ def compute_all_indicators(
     return features
 
 
-def compute_indicators(timeframes: dict[Timeframe, pd.DataFrame]) -> dict[Timeframe, dict[str, float]]:
+def uses_scalping_stack(
+    instrument: Optional[Instrument] = None,
+    *,
+    instrument_config: Optional[InstrumentConfig] = None,
+) -> bool:
+    """True when instrument config enables the MT4-style scalping indicator stack."""
+    if instrument_config is not None:
+        return instrument_config.scalping_mode
+    if instrument is None:
+        return False
+    try:
+        from src.core.config import load_instruments
+
+        cfg = load_instruments().get(instrument)
+        return bool(cfg.scalping_mode) if cfg is not None else False
+    except Exception:
+        return False
+
+
+def compute_indicators(
+    timeframes: dict[Timeframe, pd.DataFrame],
+    instrument: Optional[Instrument] = None,
+    *,
+    scalping: Optional[bool] = None,
+) -> dict[Timeframe, dict[str, float]]:
     """Compute latest values of all indicators for all timeframes."""
+    if scalping is None:
+        scalping = uses_scalping_stack(instrument)
+    if scalping:
+        from src.technical.scalping.indicators import latest_scalping_values
+
     results = {}
     for tf, df in timeframes.items():
         if df.empty or len(df) < 2:
@@ -395,7 +425,8 @@ def compute_indicators(timeframes: dict[Timeframe, pd.DataFrame]) -> dict[Timefr
         dist_support = sr["dist_support"].iloc[-1] if not sr.empty else np.nan
         dist_resistance = sr["dist_resistance"].iloc[-1] if not sr.empty else np.nan
 
-        results[tf] = {
+        snapshot: dict[str, float] = {
+            "close": float(close.iloc[-1]) if not pd.isna(close.iloc[-1]) else 0.0,
             "ema_20": float(ema_20) if not pd.isna(ema_20) else 0.0,
             "ema_50": float(ema_50) if not pd.isna(ema_50) else 0.0,
             "ema_200": float(ema_200) if not pd.isna(ema_200) else 0.0,
@@ -418,5 +449,13 @@ def compute_indicators(timeframes: dict[Timeframe, pd.DataFrame]) -> dict[Timefr
             "dist_support": float(dist_support) if not pd.isna(dist_support) else 0.0,
             "dist_resistance": float(dist_resistance) if not pd.isna(dist_resistance) else 0.0,
         }
+
+        if scalping:
+            snapshot.update(latest_scalping_values(df))
+            # Scalping risk model uses wide ATR(110) from FL bands
+            if snapshot.get("atr_110", 0.0) > 0:
+                snapshot["atr"] = snapshot["atr_110"]
+
+        results[tf] = snapshot
 
     return results

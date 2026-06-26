@@ -27,3 +27,6 @@ class SignalState:
 
         # Last published trade direction per instrument (dedupe repeated neutral updates)
         self.last_published_direction: Dict[Instrument, Direction] = {}
+
+        # Technical signal id last fused into a trade publish (per instrument)
+        self.last_fused_technical_id: Dict[Instrument, str] = {}

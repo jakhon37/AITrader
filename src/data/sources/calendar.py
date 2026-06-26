@@ -84,6 +84,26 @@ def _make_event_id(name: str, timestamp: datetime) -> str:
     return f"{safe_name}_{ts_slug}"
 
 
+def _parse_ff_date(date_text: str, year: int) -> Optional[datetime]:
+    """Parse Forex Factory day headers (supports legacy and compact formats)."""
+    cleaned = date_text.strip()
+    if not cleaned:
+        return None
+
+    candidates = [cleaned]
+    compact = re.match(r"^([A-Za-z]{3})([A-Za-z]{3})\s+(\d+)$", cleaned)
+    if compact:
+        candidates.append(f"{compact.group(1)} {compact.group(2)} {compact.group(3)}")
+
+    for text in candidates:
+        for fmt in ("%a %b %d %Y", "%a%b %d %Y"):
+            try:
+                return datetime.strptime(f"{text} {year}", fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+    return None
+
+
 # ── Forex Factory scraper ─────────────────────────────────────────────────────
 
 class CalendarFetcher:
@@ -218,13 +238,11 @@ class CalendarFetcher:
             date_cell = row.find("td", class_="calendar__date")
             if date_cell and date_cell.get_text(strip=True):
                 date_text = date_cell.get_text(strip=True)
-                try:
-                    # Forex Factory uses "Mon Jun 23" format
-                    current_date = datetime.strptime(
-                        f"{date_text} {now.year}", "%a %b %d %Y"
-                    ).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    pass
+                parsed_date = _parse_ff_date(date_text, now.year)
+                if parsed_date is not None:
+                    current_date = parsed_date
+                else:
+                    _log.debug("ff_date_parse_failed", date_text=date_text)
 
             if current_date is None:
                 continue

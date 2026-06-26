@@ -11,6 +11,7 @@ from typing import Any
 from src.core.bus import Bus
 from src.core.contracts import (
     BusChannel,
+    Direction,
     Instrument,
     MarketRegime,
     Timeframe,
@@ -21,10 +22,16 @@ from src.core.contracts import (
 from src.core.config import InstrumentConfig, load_instruments
 from src.core.logging import get_logger
 from src.technical.loader import TechnicalDataLoader, timeframe_to_timedelta
-from src.technical.indicators import compute_indicators, compute_all_indicators, compute_returns
+from src.technical.indicators import (
+    compute_indicators,
+    compute_all_indicators,
+    compute_returns,
+)
 from src.technical.regime import detect_regime
-from src.technical.confluence import compute_tf_bias, ConfluenceCombiner
+from src.technical.confluence import compute_tf_bias, ConfluenceCombiner, confluence_weights
 from src.technical.signal_builder import TechnicalSignalBuilder
+from src.technical.scalping.scoring import compute_scalping_tf_bias
+from src.technical.scalping.sessions import is_scalping_session_open
 
 _log = get_logger("D04-TECHNICAL")
 
@@ -112,16 +119,23 @@ class TechnicalEngine:
         )
 
         try:
+            scalping_mode = inst_config.scalping_mode
+
             # 3. Load multi-timeframe dataset
+            lookback_bars = 300 if scalping_mode else 250
             dataset = self.loader.load(
                 instrument=instrument,
                 timeframes=inst_config.active_timeframes,
                 current_time=current_time,
-                num_bars=250,
+                num_bars=lookback_bars,
             )
 
             # 4. Compute indicators
-            tf_indicators = compute_indicators(dataset.timeframes)
+            tf_indicators = compute_indicators(
+                dataset.timeframes,
+                instrument=instrument,
+                scalping=scalping_mode,
+            )
 
             # 5. Optional Causal Filter
             if self.enable_causal_filter:
@@ -159,16 +173,22 @@ class TechnicalEngine:
                 if tf == primary_tf:
                     primary_regime = regime_val
 
-                bias_dir, bias_conf = compute_tf_bias(tf, tf_indicators[tf], regime_val)
+                inds = tf_indicators.get(tf, {})
+                if scalping_mode and inds:
+                    bias_dir, bias_conf, meta = compute_scalping_tf_bias(inds, regime_val)
+                    inds = {**inds, **meta}
+                else:
+                    bias_dir, bias_conf = compute_tf_bias(tf, inds, regime_val)
+
                 biases.append(
                     TimeframeBias(
                         timeframe=tf,
                         direction=bias_dir,
                         confidence=bias_conf,
                         regime=regime_val,
-                        indicators=tf_indicators[tf],
-                        support=tf_indicators[tf].get("support"),
-                        resistance=tf_indicators[tf].get("resistance"),
+                        indicators=inds,
+                        support=inds.get("support"),
+                        resistance=inds.get("resistance"),
                     )
                 )
 
@@ -176,8 +196,23 @@ class TechnicalEngine:
                 primary_regime = MarketRegime.UNKNOWN
 
             # 7. Confluence combiner
-            combiner = ConfluenceCombiner(primary_tf)
+            combiner = ConfluenceCombiner(
+                primary_tf,
+                weights=confluence_weights(primary_tf, scalping=scalping_mode),
+            )
             consensus_dir, consensus_conf, confluence_score = combiner.combine(biases)
+
+            # Session gate for MT4 scalping template (i-Sessions)
+            if scalping_mode and consensus_dir != Direction.NEUTRAL:
+                if not is_scalping_session_open(current_time):
+                    _log.debug(
+                        "scalping_session_closed",
+                        instrument=instrument.value,
+                        timestamp=current_time.isoformat(),
+                    )
+                    consensus_dir = Direction.NEUTRAL
+                    consensus_conf = 0.0
+                    confluence_score = 0.0
 
             # 8. Build TechnicalSignal
             builder = TechnicalSignalBuilder(primary_tf)

@@ -100,7 +100,7 @@ def test_compute_indicators_dict(sample_ohlcv):
     indicators = results[Timeframe.H1]
     
     expected_keys = [
-        "ema_20", "ema_50", "ema_200", "adx", "rsi", "stoch_k", "stoch_d",
+        "close", "ema_20", "ema_50", "ema_200", "adx", "rsi", "stoch_k", "stoch_d",
         "macd", "macd_signal", "macd_hist", "atr", "bb_middle", "bb_upper",
         "bb_lower", "bb_width", "obv", "vwap", "support", "resistance",
         "dist_support", "dist_resistance"

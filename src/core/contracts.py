@@ -263,6 +263,7 @@ class OrderEvent(BaseModel):
     event_type: Literal["created", "filled", "cancelled", "rejected"]
     order:      Order
     timestamp:  datetime
+    detail:     Optional[str] = None
 
 
 class PositionSummary(BaseModel):

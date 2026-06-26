@@ -8,18 +8,18 @@ This guide helps you start real-time paper trading with live dashboards in **one
 
 ```bash
 # Start everything
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 
 # Check status
 ./scripts/status_paper.sh
 
 # Stop everything
-./scripts/stop_paper.sh
+./scripts/stop_webui.sh
 ```
 
-Open dashboards:
-- **Paper Monitor**: http://localhost:8501
-- **Feature Explorer**: http://localhost:8502
+Open the trading terminal:
+- **Web UI**: http://localhost:5173
+- **API / health**: http://localhost:8000/api/health
 
 ---
 
@@ -38,7 +38,7 @@ Open dashboards:
 
 3. **Data available:**
    - Live data: Automatically fetched from Yahoo Finance ✅
-   - Or use historical: `./scripts/start_paper.sh --no-live`
+   - Or use historical: `./scripts/start_webui.sh --no-live`
 
 ---
 
@@ -47,7 +47,7 @@ Open dashboards:
 ### Basic Start
 
 ```bash
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 ```
 
 This starts:
@@ -60,13 +60,13 @@ This starts:
 
 ```bash
 # Custom capital and interval
-./scripts/start_paper.sh --capital 50000 --interval 1800
+./scripts/start_webui.sh --capital 50000 --interval 1800
 
 # Multiple symbols
-./scripts/start_paper.sh --symbols "eurusd gbpusd usdjpy"
+./scripts/start_webui.sh --symbols "eurusd gbpusd usdjpy"
 
 # Historical data only (no live)
-./scripts/start_paper.sh --no-live
+./scripts/start_webui.sh --no-live
 ```
 
 **Available Options:**
@@ -132,7 +132,7 @@ After starting, open in your browser:
 ### Stop All Services
 
 ```bash
-./scripts/stop_paper.sh
+./scripts/stop_webui.sh
 ```
 
 Stops:
@@ -142,7 +142,7 @@ Stops:
 
 ### Emergency Stop
 
-If `stop_paper.sh` doesn't work:
+If `stop_webui.sh` doesn't work:
 
 ```bash
 # Kill all related processes
@@ -181,7 +181,7 @@ trading-platform/
 
 2. **Stop existing services:**
    ```bash
-   ./scripts/stop_paper.sh
+   ./scripts/stop_webui.sh
    ```
 
 3. **Check logs for errors:**
@@ -193,7 +193,7 @@ trading-platform/
 
 **Change dashboard ports:**
 ```bash
-# Edit scripts/start_paper.sh
+# Edit config/instruments.yaml or config/dev.yaml
 MONITOR_DASHBOARD_PORT=8503  # Change from 8501
 FEATURE_EXPLORER_PORT=8504   # Change from 8502
 ```
@@ -202,7 +202,7 @@ FEATURE_EXPLORER_PORT=8504   # Change from 8502
 
 If Yahoo Finance is down, use historical data:
 ```bash
-./scripts/start_paper.sh --no-live
+./scripts/start_webui.sh --no-live
 ```
 
 ### Model Not Found
@@ -272,7 +272,7 @@ Then review: `docs/go-live-checklist.md`
 ### Day 1: Start Paper Trading
 ```bash
 # Morning: Start services
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 
 # Check status
 ./scripts/status_paper.sh
@@ -330,7 +330,7 @@ cat logs/audit.jsonl | grep position_close | wc -l
 A: Minimum 4-6 weeks for proper validation.
 
 **Q: Can I trade multiple symbols?**
-A: Yes! `./scripts/start_paper.sh --symbols "eurusd gbpusd usdjpy"`
+A: Yes! `./scripts/start_webui.sh --symbols "eurusd gbpusd usdjpy"`
 
 **Q: Is the data really live?**
 A: Yes! Fetched from Yahoo Finance in real-time.
@@ -342,13 +342,13 @@ A: Yes, but Forex markets close on weekends (Friday 5pm - Sunday 5pm EST).
 A: Check dashboards, logs should show "Using LIVE market data".
 
 **Q: What if I want to pause?**
-A: `./scripts/stop_paper.sh` - restart anytime with `./scripts/start_paper.sh`
+A: `./scripts/stop_webui.sh` - restart anytime with `./scripts/start_webui.sh`
 
 ---
 
 **Ready to start? Run:**
 ```bash
-./scripts/start_paper.sh
+./scripts/start_webui.sh
 ```
 
 **Then open:** http://localhost:8501

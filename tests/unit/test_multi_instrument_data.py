@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from src.core.config import InstrumentConfig, SignalDecayConfig
 from src.core.contracts import Instrument, Timeframe
 from src.core.gap_fill import store_needs_gap_fill
-from src.core.instruments import get_enabled_instruments
+from src.core.instruments import get_enabled_instruments, get_scheduler_active_pairs
 
 
 def _utc(y: int, m: int, d: int, h: int = 0, minute: int = 0) -> datetime:
@@ -42,6 +42,25 @@ def test_get_enabled_instruments_all_four() -> None:
             Instrument.USDJPY,
             Instrument.XAUUSD,
         ]
+
+
+def test_get_scheduler_active_pairs_uses_primary_timeframe() -> None:
+    configs = _mock_instruments(
+        XAUUSD=InstrumentConfig(
+            enabled=True,
+            pip_size=0.01,
+            lot_size=100,
+            session_hours={"open": "22:00", "close": "21:00"},
+            active_timeframes=[Timeframe.M15, Timeframe.H1],
+            primary_timeframe=Timeframe.M15,
+            signal_decay=SignalDecayConfig(),
+        ),
+    )
+    with patch("src.core.instruments.load_instruments", return_value=configs):
+        pairs = get_scheduler_active_pairs()
+    assert (Instrument.EURUSD, Timeframe.H1) in pairs
+    assert (Instrument.XAUUSD, Timeframe.M15) in pairs
+    assert (Instrument.XAUUSD, Timeframe.H1) not in pairs
 
 
 def test_get_enabled_instruments_respects_disabled() -> None:

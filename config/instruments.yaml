@@ -5,9 +5,9 @@ EURUSD:
   - 4h
   - 1d
   enabled: true
-  fundamental_weight: 0.35
+  fundamental_weight: 0.3
   lot_size: 100000
-  max_position_lots: 1.0
+  max_position_lots: 1
   news_halt_minutes: 30
   pip_size: 0.0001
   primary_timeframe: 1h
@@ -20,7 +20,7 @@ EURUSD:
     geopolitical: 6
     market_risk: 2
     technical_conf: 1
-  technical_weight: 0.65
+  technical_weight: 0.7
 GBPUSD:
   active_timeframes:
   - 15m
@@ -69,7 +69,9 @@ USDJPY:
   technical_weight: 0.6
 XAUUSD:
   active_timeframes:
+  - 5m
   - 15m
+  - 30m
   - 1h
   - 4h
   - 1d
@@ -77,12 +79,13 @@ XAUUSD:
     end: '22:00'
     start: '21:00'
   enabled: true
-  fundamental_weight: 0.5
+  fundamental_weight: 0.3
   lot_size: 100
-  max_position_lots: 0.5
-  news_halt_minutes: 45
+  max_position_lots: 1
+  news_halt_minutes: 30
   pip_size: 0.01
-  primary_timeframe: 1h
+  primary_timeframe: 15m
+  scalping_mode: true
   session_hours:
     close: '21:00'
     open: '22:00'
@@ -92,4 +95,4 @@ XAUUSD:
     geopolitical: 12
     market_risk: 4
     technical_conf: 1
-  technical_weight: 0.5
+  technical_weight: 0.7

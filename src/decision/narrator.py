@@ -54,3 +54,35 @@ def build_narrative(
         combined = combined[:274] + "..."
 
     return combined
+
+
+def build_neutral_narrative(
+    f: FundamentalSignal | None,
+    t: TechnicalSignal,
+    fused_confidence: float,
+) -> str:
+    """Explain why fusion stayed neutral for this instrument."""
+    fund_note = ""
+    if f is not None:
+        if f.source_headline and f.source_headline.startswith("Upcoming:"):
+            fund_note = "Fundamental: calendar watch (neutral until release)."
+        else:
+            fund_note = f"Fundamental: {f.direction.value} ({f.event_type.value})."
+
+    tech_edge = t.confidence * 100.0
+    tech_note = (
+        f"Technical: {t.direction.value} with {tech_edge:.0f}% edge "
+        f"(fusion needs >15% combined score)."
+    )
+
+    parts = [f"No fused edge on {t.instrument.value}."]
+    if fund_note:
+        parts.append(fund_note)
+    parts.append(tech_note)
+    if fused_confidence > 0:
+        parts.append(f"Combined score only {fused_confidence * 100:.0f}%.")
+
+    combined = " ".join(parts)
+    if len(combined) > 277:
+        combined = combined[:274] + "..."
+    return combined
