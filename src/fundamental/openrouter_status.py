@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from src.core.clock import now
 from src.core.config import AppConfig
 from src.fundamental.sentiment import SentimentScorer
-from src.fundamental.synthesizer import NarrativeSynthesizer, select_available_free_model
+from src.fundamental.openrouter_models import is_narrative_suitable_model, select_validated_free_model
+from src.fundamental.synthesizer import NarrativeSynthesizer
 
 
 @dataclass(frozen=True)
@@ -49,11 +51,30 @@ async def build_openrouter_status(
     budget_used, budget_cap = synthesizer.budget_snapshot()
 
     if api_key_configured and synthesizer.budget_available():
-        try:
-            narrative_model = await synthesizer.model
-        except Exception as exc:  # noqa: BLE001
-            narrative_error = str(exc)[:120]
-            narrative_model = synthesizer.cached_model_id()
+        cached = synthesizer.cached_model_id()
+        if cached and is_narrative_suitable_model(cached):
+            narrative_model = cached
+        else:
+            try:
+                narrative_model = await select_validated_free_model(
+                    api_key or "",
+                    preferred=synthesizer._preferred_models,  # noqa: SLF001
+                    purpose="narrative",
+                )
+                if narrative_model and is_narrative_suitable_model(narrative_model):
+                    synthesizer._model = narrative_model  # noqa: SLF001
+                    synthesizer._last_model_selection = now()  # noqa: SLF001
+                elif narrative_model and not is_narrative_suitable_model(narrative_model):
+                    narrative_model = None
+                    narrative_error = "model unsuitable for chat/narrative"
+                elif cached:
+                    narrative_model = cached
+                    narrative_error = "awaiting validated model"
+                else:
+                    narrative_error = "no validated free model available"
+            except Exception as exc:  # noqa: BLE001
+                narrative_error = str(exc)[:120]
+                narrative_model = cached
     elif api_key_configured:
         narrative_error = "daily budget exhausted"
 
@@ -64,18 +85,12 @@ async def build_openrouter_status(
     if sentiment_backend == "openrouter" and sentiment_scorer.openrouter_key_configured():
         sentiment_or_active = True
         cached = sentiment_scorer.cached_openrouter_model()
-        if cached:
+        if cached and is_narrative_suitable_model(cached):
             sentiment_model = cached
+        elif cached:
+            sentiment_error = "cached model unsuitable"
         else:
-            try:
-                from src.fundamental.synthesizer import PREFERRED_FREE_MODELS
-
-                sentiment_model = await select_available_free_model(
-                    preferred=PREFERRED_FREE_MODELS,
-                    api_key=sentiment_scorer.openrouter_api_key(),
-                )
-            except Exception as exc:  # noqa: BLE001
-                sentiment_error = str(exc)[:120]
+            sentiment_error = "not selected yet (runs on news poll)"
 
     return OpenRouterStatus(
         api_key_configured=api_key_configured,

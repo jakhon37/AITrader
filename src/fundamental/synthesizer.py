@@ -16,7 +16,7 @@ import httpx
 from src.core.clock import now
 from src.core.contracts import Direction, EconomicEvent, Instrument
 from src.core.logging import get_logger
-from src.fundamental.text_utils import sanitize_llm_narrative
+from src.fundamental.text_utils import is_safety_classifier_response, sanitize_llm_narrative
 
 _log = get_logger("D03-FUNDAMENTAL")
 
@@ -29,6 +29,43 @@ PREFERRED_FREE_MODELS: List[str] = [
     "microsoft/phi-3-mini-128k-instruct:free",
     "huggingfaceh4/zephyr-7b-beta:free",
 ]
+
+# Models that often return empty content or safety labels for general chat.
+_CHAT_UNSUITABLE_HINTS: tuple[str, ...] = (
+    "code",
+    "embed",
+    "rerank",
+    "vision",
+    "image",
+    "north-mini",
+    "north",
+    "safety",
+    "guard",
+    "classifier",
+)
+
+
+def is_chat_suitable_model(model_id: str) -> bool:
+    """True when a free OpenRouter model is likely to answer general chat prompts."""
+    lower = model_id.lower()
+    return not any(hint in lower for hint in _CHAT_UNSUITABLE_HINTS)
+
+
+def extract_openrouter_content(data: Dict[str, Any]) -> Optional[str]:
+    """Pull assistant text from an OpenRouter chat/completions JSON body."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return None
+    for key in ("content", "text", "reasoning"):
+        raw = message.get(key)
+        if raw is not None:
+            text = str(raw).strip()
+            if text:
+                return text
+    return None
 
 # Simple cache for available models
 _available_models_cache: Dict[str, Any] = {"models": [], "fetched_at": None}
@@ -78,26 +115,47 @@ async def get_available_free_models(api_key: Optional[str] = None, force_refresh
 async def select_available_free_model(
     preferred: Optional[List[str]] = None,
     api_key: Optional[str] = None,
+    *,
+    exclude: Optional[set[str]] = None,
+    chat_suitable_only: bool = False,
+    force_refresh: bool = False,
 ) -> str:
     """Pick the first preferred free model that is currently available.
     Falls back to first available free model or a hardcoded default.
     """
     prefs = preferred or PREFERRED_FREE_MODELS
-    available_free = await get_available_free_models(api_key)
+    available_free = await get_available_free_models(api_key, force_refresh=force_refresh)
+    blocked = exclude or set()
 
-    # Try preferred first
-    for model in prefs:
-        if model in available_free:
-            return model
+    def _eligible(models: List[str]) -> List[str]:
+        picked = [m for m in models if m not in blocked and m in available_free]
+        if chat_suitable_only:
+            picked = [m for m in picked if is_chat_suitable_model(m)]
+        return picked
 
-    # Any free model as fallback
-    if available_free:
-        # Prefer ones with good context if possible, but simple pick first
-        return available_free[0]
+    for model in _eligible(prefs):
+        return model
 
-    # Ultimate fallback
-    _log.warning("openrouter_no_free_models_found", using_fallback=prefs[0])
-    return prefs[0]
+    pool = _eligible(available_free)
+    if pool:
+        return pool[0]
+
+    if not chat_suitable_only:
+        for model in prefs:
+            if model not in blocked and model in available_free:
+                return model
+        for model in available_free:
+            if model not in blocked:
+                return model
+
+    # Ultimate fallback (chat path may still reject unsuitable models at call time)
+    fallback = next((m for m in prefs if is_chat_suitable_model(m)), prefs[0])
+    _log.warning(
+        "openrouter_no_free_models_found",
+        using_fallback=fallback,
+        chat_suitable_only=chat_suitable_only,
+    )
+    return fallback
 
 
 class NarrativeSynthesizer:
@@ -130,22 +188,41 @@ class NarrativeSynthesizer:
         # Will be set when first used
         self._cost_per_call: float = 0.0
 
+    async def _assign_validated_model(self, *, purpose: str = "narrative") -> Optional[str]:
+        from src.fundamental.openrouter_models import select_validated_free_model
+
+        if not self.api_key:
+            return None
+        validated = await select_validated_free_model(
+            self.api_key,
+            preferred=self._preferred_models,
+            purpose=purpose,
+            suitable_only=True,
+        )
+        if validated:
+            self._model = validated
+            self._last_model_selection = now()
+            self._cost_per_call = 0.0 if ":free" in validated else 0.0005
+            _log.info("openrouter_model_selected", model=validated, purpose=purpose)
+        return validated
+
     @property
     async def model(self) -> str:
-        """Return a currently available free model (auto-selects if needed)."""
+        """Return a live-validated free model (re-probes when stale)."""
         now_dt = now()
-        if (
+        stale = (
             self._model is None
             or self._last_model_selection is None
             or (now_dt - self._last_model_selection) > timedelta(minutes=10)
-        ):
-            self._model = await select_available_free_model(
-                preferred=self._preferred_models,
-                api_key=self.api_key,
-            )
-            self._last_model_selection = now_dt
-            self._cost_per_call = 0.0 if ":free" in self._model else 0.0005
-            _log.info("openrouter_model_selected", model=self._model)
+            or not is_chat_suitable_model(self._model or "")
+        )
+        if stale:
+            validated = await self._assign_validated_model(purpose="narrative")
+            if validated:
+                return validated
+            if self._model:
+                return self._model
+            raise RuntimeError("No validated OpenRouter free model available")
 
         return self._model
 
@@ -209,8 +286,9 @@ class NarrativeSynthesizer:
         if not self._update_and_check_budget():
             return fallback
 
-        current_model = await self.model  # dynamic selection of available free model
+        from src.fundamental.openrouter_models import mark_model_failed, select_validated_free_model
 
+        tried: set[str] = set()
         prompt = (
             f"You are a professional Forex research analyst. Synthesize a concise market narrative "
             f"(under 60 words) for a trader monitoring {instrument.value}. "
@@ -221,7 +299,6 @@ class NarrativeSynthesizer:
         )
 
         try:
-            # We construct a client manually to allow customized timeouts and error management
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -229,47 +306,76 @@ class NarrativeSynthesizer:
                     "HTTP-Referer": "https://github.com/jakhon37/AITrader",
                     "X-Title": "AITrader System",
                 }
-                payload = {
-                    "model": current_model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You provide short, professional financial insights. "
-                                "Plain text only — no markdown, no asterisks, no bullet lists."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": 0.3,
-                    "max_tokens": 100,
-                }
 
-                _log.debug("synthesizer_api_request", instrument=instrument.value, model=current_model)
-                response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    content = sanitize_llm_narrative(
-                        data["choices"][0]["message"]["content"].strip()
+                for _attempt in range(4):
+                    current_model = await select_validated_free_model(
+                        self.api_key,
+                        preferred=self._preferred_models,
+                        exclude=tried,
+                        purpose="narrative",
                     )
-                    self._daily_spend += self._cost_per_call
-                    _log.debug("synthesizer_api_success", spend=self._daily_spend, model=current_model)
-                    return content
-                else:
-                    if response.status_code in (400, 404):  # model likely unavailable
-                        self._last_model_selection = None  # force reselect next time
+                    if not current_model:
+                        break
+                    tried.add(current_model)
+                    self._model = current_model
+                    self._cost_per_call = 0.0 if ":free" in current_model else 0.0005
+
+                    payload = {
+                        "model": current_model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You provide short, professional financial insights. "
+                                    "Plain text only — no markdown, no asterisks, no bullet lists."
+                                ),
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 100,
+                    }
+
+                    _log.debug(
+                        "synthesizer_api_request",
+                        instrument=instrument.value,
+                        model=current_model,
+                    )
+                    response = await client.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+
+                    if response.status_code == 200:
+                        raw_content = extract_openrouter_content(response.json())
+                        if raw_content and not is_safety_classifier_response(raw_content):
+                            content = sanitize_llm_narrative(raw_content)
+                            if content:
+                                self._daily_spend += self._cost_per_call
+                                self._last_model_selection = now()
+                                _log.debug(
+                                    "synthesizer_api_success",
+                                    spend=self._daily_spend,
+                                    model=current_model,
+                                )
+                                return content
+                        mark_model_failed(current_model)
+                        self._last_model_selection = None
+                        _log.warning("synthesizer_empty_content", model=current_model)
+                        continue
+
+                    if response.status_code in (400, 404, 429):
+                        mark_model_failed(current_model)
+                        self._last_model_selection = None
                     _log.warning(
                         "synthesizer_api_error_code",
                         status_code=response.status_code,
                         response=response.text[:200],
                         model=current_model,
                     )
-                    return fallback
+
+                return fallback
 
         except httpx.TimeoutException:
             _log.warning("synthesizer_api_timeout", timeout=self.timeout)

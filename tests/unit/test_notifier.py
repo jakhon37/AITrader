@@ -29,7 +29,7 @@ from src.core.contracts import (
 )
 from src.core.ids import new_signal_id
 from src.notifier.aggregator import MessageAggregator
-from src.notifier.commands import CommandCache, CommandProcessor
+from src.notifier.commands import CommandProcessor
 from src.notifier.formatters import (
     format_fundamental_signal,
     format_order_event,
@@ -37,6 +37,7 @@ from src.notifier.formatters import (
     format_trade_signal,
 )
 from src.notifier.router import MessageRouter
+from src.notifier.service import NotifierService
 from src.notifier.telegram import TelegramClient
 
 
@@ -165,6 +166,35 @@ def test_message_router() -> None:
     assert router.should_send_trade_signal(ts, qh_time) is False
 
 
+def test_notifier_service_dedupes_repeated_trade_alerts() -> None:
+    cfg = AppConfig()
+    service = NotifierService(config=cfg, bus=object())
+    now_utc = datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc)
+    ts = TradeSignal(
+        signal_id="1",
+        instrument=Instrument.XAUUSD,
+        timestamp=now_utc,
+        valid_until=now_utc + timedelta(hours=1),
+        direction=Direction.LONG,
+        confidence=0.61,
+        strength=SignalStrength.MODERATE,
+        fundamental_weight=0.0,
+        technical_weight=1.0,
+        suggested_side=OrderSide.BUY,
+        suggested_entry=None,
+        suggested_sl=None,
+        suggested_tp=None,
+        suggested_size=None,
+        narrative=None,
+        sources=SignalSource(fundamental=None, technical=None),
+        model_version=None,
+    )
+
+    assert service._should_alert_trade_signal(ts, now_utc) is True
+    assert service._should_alert_trade_signal(ts, now_utc + timedelta(minutes=1)) is False
+    assert service._should_alert_trade_signal(ts, now_utc + timedelta(minutes=20)) is True
+
+
 # ── Aggregator Test ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -216,8 +246,7 @@ async def test_command_processor() -> None:
 
     from tests.unit.test_fundamental import MockBus
     bus = MockBus()
-    cache = CommandCache()
-    proc = CommandProcessor(bus=bus, config=cfg, cache=cache)
+    proc = CommandProcessor(bus=bus, config=cfg)
 
     sent_replies = []
     async def mock_reply(msg: str) -> None:

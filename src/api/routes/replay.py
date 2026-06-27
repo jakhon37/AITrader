@@ -8,7 +8,11 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from src.api.signal_pipeline import pause_live_signal_pipeline, resume_live_signal_pipeline
+from src.api.signal_pipeline import (
+    pause_live_signal_pipeline,
+    restore_live_clock,
+    resume_live_signal_pipeline,
+)
 from src.core.contracts import Instrument, OrderSide
 from src.backtest.replay import StrategyReplaySession, ManualReplaySession
 
@@ -169,6 +173,7 @@ async def start_replay(request: Request, body: StartReplayRequest) -> Dict[str, 
         await session.start()
     except Exception:
         request.app.state.active_replay_session = None
+        restore_live_clock(getattr(request.app.state, "live_clock", None))
         await resume_live_signal_pipeline(request.app)
         raise
 
@@ -356,6 +361,8 @@ async def release_replay(request: Request) -> Dict[str, Any]:
             logger.warning(f"Error releasing replay session: {e}")
         request.app.state.active_replay_session = None
 
+    restore_live_clock(getattr(request.app.state, "live_clock", None))
+
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler:
         scheduler.reset_last_emitted()
@@ -379,6 +386,7 @@ async def stop_replay(request: Request) -> Dict[str, Any]:
         await session.stop()
 
     request.app.state.active_replay_session = None
+    restore_live_clock(getattr(request.app.state, "live_clock", None))
     await resume_live_signal_pipeline(request.app)
     return {"status": "success", "report": report}
 

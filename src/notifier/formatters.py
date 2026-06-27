@@ -5,6 +5,7 @@ Converts trading and infrastructure events into descriptive HTML alerts.
 
 from __future__ import annotations
 
+from src.core.display_time import DEFAULT_DISPLAY_TIMEZONE, format_chart_time
 from src.core.contracts import (
     Direction,
     FundamentalSignal,
@@ -15,7 +16,10 @@ from src.core.contracts import (
 )
 
 
-def format_trade_signal(signal: TradeSignal) -> str:
+def format_trade_signal(
+    signal: TradeSignal,
+    tz_name: str | None = DEFAULT_DISPLAY_TIMEZONE,
+) -> str:
     """Format a D05-DECISION TradeSignal into HTML."""
     emoji = "🟢" if signal.direction == Direction.LONG else "🔴" if signal.direction == Direction.SHORT else "⚪"
     side_str = signal.suggested_side.value.upper() if signal.suggested_side else "NEUTRAL"
@@ -51,7 +55,7 @@ def format_trade_signal(signal: TradeSignal) -> str:
         size = f"{signal.suggested_size:.2f} lots" if signal.suggested_size else "N/A"
         lines.append(f"⚡ <b>Entry:</b> {entry} | <b>SL:</b> {sl} | <b>TP:</b> {tp} (Size: {size})")
 
-    valid_str = signal.valid_until.strftime("%H:%M UTC")
+    valid_str = format_chart_time(signal.valid_until, tz_name)
     lines.append(f"🕒 <b>Valid until:</b> {valid_str}")
 
     if signal.narrative:
@@ -94,12 +98,17 @@ def format_order_event(event: OrderEvent) -> str:
     return "\n".join(lines)
 
 
-def format_calendar_briefing(signal: FundamentalSignal) -> str:
+def format_calendar_briefing(
+    signal: FundamentalSignal,
+    tz_name: str | None = DEFAULT_DISPLAY_TIMEZONE,
+) -> str:
     """Format a pre-release calendar briefing for Telegram."""
     event = signal.triggering_event
     impact = event.impact.upper() if event else "UNKNOWN"
     emoji = "🔴" if impact == "HIGH" else "🟠" if impact == "MEDIUM" else "🟡"
-    release_ts = event.timestamp.strftime("%H:%M UTC") if event else "TBD"
+    release_ts = (
+        format_chart_time(event.timestamp, tz_name) if event else "TBD"
+    )
     mins = ""
     if event and signal.source_headline.startswith("Upcoming:"):
         mins = signal.source_headline.split("in ", 1)[-1] if "in " in signal.source_headline else ""
@@ -123,15 +132,20 @@ def format_calendar_briefing(signal: FundamentalSignal) -> str:
     return "\n".join(lines)
 
 
-def format_fundamental_signal(signal: FundamentalSignal) -> str:
+def format_fundamental_signal(
+    signal: FundamentalSignal,
+    tz_name: str | None = DEFAULT_DISPLAY_TIMEZONE,
+) -> str:
     """Format a D03-FUNDAMENTAL FundamentalSignal into HTML."""
     emoji = "🟢" if signal.direction == Direction.LONG else "🔴" if signal.direction == Direction.SHORT else "⚪"
     strength_str = signal.strength.value.upper()
     confidence_pct = int(signal.confidence * 100)
 
+    time_str = format_chart_time(signal.timestamp, tz_name)
     lines = [
         "📰 <b>Fundamental Signal</b>",
         f"{emoji} <b>{signal.instrument.value}</b> — {strength_str} ({confidence_pct}%)",
+        f"<b>Time:</b> {time_str}",
         f"<b>Event:</b> {signal.event_type.value.upper()}",
         f"<b>Score:</b> {signal.sentiment_score:+.2f}",
         f"<b>Headline:</b> {signal.source_headline[:120]}",
@@ -143,10 +157,15 @@ def format_fundamental_signal(signal: FundamentalSignal) -> str:
     return "\n".join(lines)
 
 
-def format_system_health(event: SystemHealthEvent) -> str:
+def format_system_health(
+    event: SystemHealthEvent,
+    tz_name: str | None = DEFAULT_DISPLAY_TIMEZONE,
+) -> str:
     """Format a D11-OPS or infrastructure SystemHealthEvent into HTML."""
     emoji = "🟢" if event.status == HealthStatus.OK else "⚠️" if event.status == HealthStatus.DEGRADED else "🚨"
-    ts_str = event.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+    ts_str = format_chart_time(
+        event.timestamp, tz_name, include_date=True, include_seconds=True
+    )
 
     lines = [
         f"{emoji} <b>System Health: {event.status.value.upper()}</b>",

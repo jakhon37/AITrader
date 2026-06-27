@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from src.core.candle import TF_DURATION
 from src.core.contracts import Instrument, Timeframe
 from src.core.logging import get_logger
 from src.core.session import is_instrument_session_open
@@ -34,6 +35,22 @@ class DataFreshnessProbe:
         self._store = store
         self._stale_multiplier = stale_multiplier
 
+    @staticmethod
+    def _bar_close_time(bar_open: datetime, timeframe: Timeframe) -> datetime:
+        """Freshness is measured from candle close, not open."""
+        if bar_open.tzinfo is None:
+            bar_open = bar_open.replace(tzinfo=timezone.utc)
+        return bar_open + TF_DURATION.get(timeframe, TF_DURATION[Timeframe.H1])
+
+    def _age_minutes(
+        self,
+        bar_open: datetime,
+        timeframe: Timeframe,
+        now: datetime,
+    ) -> float:
+        close_ts = self._bar_close_time(bar_open, timeframe)
+        return (now - close_ts).total_seconds() / 60.0
+
     def check_pair(
         self,
         instrument: Instrument,
@@ -61,7 +78,7 @@ class DataFreshnessProbe:
             live_ts = live_last_bar_at
             if live_ts.tzinfo is None:
                 live_ts = live_ts.replace(tzinfo=timezone.utc)
-            live_age = (now - live_ts).total_seconds() / 60.0
+            live_age = self._age_minutes(live_ts, timeframe, now)
             if live_age <= max_age_min:
                 return {
                     "status": "ok",
@@ -81,7 +98,7 @@ class DataFreshnessProbe:
             last_stored, _ = self._store.peek_latest_ohlcv(instrument, timeframe)
             if last_stored is not None:
                 last_ts = last_stored.astimezone(timezone.utc)
-                age_min = (now - last_ts).total_seconds() / 60.0
+                age_min = self._age_minutes(last_ts, timeframe, now)
                 effective_ts = last_ts
                 source = "parquet_tail"
                 if live_last_bar_at is not None:
@@ -90,7 +107,7 @@ class DataFreshnessProbe:
                         live_ts = live_ts.replace(tzinfo=timezone.utc)
                     if live_ts > last_ts:
                         effective_ts = live_ts
-                        age_min = (now - live_ts).total_seconds() / 60.0
+                        age_min = self._age_minutes(live_ts, timeframe, now)
                         source = "live_poll"
                 status = "ok" if age_min <= max_age_min else "degraded"
                 message = (
@@ -140,7 +157,7 @@ class DataFreshnessProbe:
         last_ts = df.index[-1]
         if last_ts.tzinfo is None:
             last_ts = last_ts.replace(tzinfo=timezone.utc)
-        age_min = (now - last_ts).total_seconds() / 60.0
+        age_min = self._age_minutes(last_ts, timeframe, now)
 
         effective_ts = last_ts
         source = "parquet"
@@ -148,7 +165,7 @@ class DataFreshnessProbe:
             live_ts = live_last_bar_at
             if live_ts.tzinfo is None:
                 live_ts = live_ts.replace(tzinfo=timezone.utc)
-            live_age = (now - live_ts).total_seconds() / 60.0
+            live_age = self._age_minutes(live_ts, timeframe, now)
             if live_ts > last_ts:
                 effective_ts = live_ts
                 age_min = live_age

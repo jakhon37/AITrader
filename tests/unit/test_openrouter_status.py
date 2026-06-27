@@ -69,7 +69,7 @@ def test_format_openrouter_status_active_narrative() -> None:
 @pytest.mark.asyncio
 async def test_status_command_includes_openrouter_block() -> None:
     from src.core.config import AppConfig
-    from src.notifier.commands import CommandCache, CommandProcessor
+    from src.notifier.commands import CommandProcessor
     from tests.unit.test_fundamental import MockBus
 
     cfg = AppConfig()
@@ -92,7 +92,6 @@ async def test_status_command_includes_openrouter_block() -> None:
     proc = CommandProcessor(
         bus=MockBus(),
         config=cfg,
-        cache=CommandCache(),
         fundamental_agent=agent,
     )
 

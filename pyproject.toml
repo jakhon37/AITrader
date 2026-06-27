@@ -67,6 +67,8 @@ viz = [
 
 live_data = [
   "yfinance>=0.2",
+  "feedparser>=6.0",
+  "beautifulsoup4>=4.12",
 ]
 
 webui = [

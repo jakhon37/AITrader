@@ -4,6 +4,21 @@ from __future__ import annotations
 
 import re
 
+_SAFETY_LABEL_RE = re.compile(
+    r"^(?:user\s+safety|response\s+safety|content\s+safety|safety\s*level)\s*:\s*\w+\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_safety_classifier_response(text: str) -> bool:
+    """True when OpenRouter returned safety metadata instead of a chat answer."""
+    if not text or not text.strip():
+        return False
+    lines = [ln.strip() for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    if not lines:
+        return False
+    return all(_SAFETY_LABEL_RE.match(line) for line in lines)
+
 
 def sanitize_llm_narrative(text: str) -> str:
     """Strip markdown artifacts from model output for plain-text surfaces."""

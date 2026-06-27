@@ -84,7 +84,7 @@ XAUUSD:
   max_position_lots: 1
   news_halt_minutes: 30
   pip_size: 0.01
-  primary_timeframe: 15m
+  primary_timeframe: 1h
   scalping_mode: true
   session_hours:
     close: '21:00'

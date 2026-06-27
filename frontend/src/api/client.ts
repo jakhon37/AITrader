@@ -81,6 +81,25 @@ export async function getFundamentalSignals() {
   return res.json();
 }
 
+/** Sync chart display timezone so Telegram alerts match the browser chart. */
+export async function syncChartTimezone(timezone: string) {
+  const res = await fetch(`${API_BASE}/preferences/chart-timezone`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timezone }),
+  });
+  if (!res.ok) throw new Error('Failed to sync chart timezone');
+  return res.json();
+}
+
+export async function getNews(start: string, end: string, instrument?: string) {
+  const params = new URLSearchParams({ start, end });
+  if (instrument) params.set('instrument', instrument);
+  const res = await fetch(`${API_BASE}/data/news?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to fetch news');
+  return res.json();
+}
+
 export async function getUpcomingCalendar(hours = 48, minImpact: 'low' | 'medium' | 'high' = 'low') {
   const params = new URLSearchParams({
     hours: String(hours),

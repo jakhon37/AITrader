@@ -30,3 +30,6 @@ class SignalState:
 
         # Technical signal id last fused into a trade publish (per instrument)
         self.last_fused_technical_id: Dict[Instrument, str] = {}
+
+        # Dedupe repeated trade publishes for the same bar + fused outcome
+        self.last_fusion_fingerprint: Dict[Instrument, tuple] = {}

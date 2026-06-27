@@ -191,3 +191,22 @@ class CalendarMixin:
                 f"UPDATE calendar SET {col} = 1 WHERE event_id = ?",  # noqa: S608
                 (event_id,),
             )
+
+    def purge_calendar_older_than(self, cutoff: datetime) -> int:
+        """Delete calendar events whose release timestamp is before cutoff."""
+        if cutoff.tzinfo is None:
+            raise DataError("purge_calendar_older_than: cutoff must be UTC-aware.")
+        cutoff_iso = cutoff.astimezone(timezone.utc).isoformat()
+        with sqlite3.connect(self._calendar_db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM calendar WHERE timestamp < ?",
+                (cutoff_iso,),
+            )
+            deleted = cursor.rowcount
+        if deleted:
+            _log.info(
+                "calendar_purged_old",
+                count=deleted,
+                cutoff=cutoff.date().isoformat(),
+            )
+        return deleted

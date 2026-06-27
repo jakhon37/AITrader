@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { syncChartTimezone } from '../api/client';
 import {
   BROWSER_TIMEZONE_VALUE,
   formatTimezoneShort,
@@ -22,11 +23,26 @@ export function useChartTimezone() {
     };
   }, []);
 
-  const setTimezone = useCallback((timezone: string) => {
-    saveChartTimezone(timezone);
-    setStored(timezone);
-    window.dispatchEvent(new CustomEvent(TIMEZONE_CHANGE_EVENT, { detail: timezone }));
+  const pushTimezoneToServer = useCallback((timezone: string) => {
+    const resolved = resolveChartTimezone(timezone);
+    syncChartTimezone(resolved).catch(() => {
+      /* non-fatal: chart still works locally */
+    });
   }, []);
+
+  useEffect(() => {
+    pushTimezoneToServer(stored ?? BROWSER_TIMEZONE_VALUE);
+  }, [stored, pushTimezoneToServer]);
+
+  const setTimezone = useCallback(
+    (timezone: string) => {
+      saveChartTimezone(timezone);
+      setStored(timezone);
+      pushTimezoneToServer(timezone);
+      window.dispatchEvent(new CustomEvent(TIMEZONE_CHANGE_EVENT, { detail: timezone }));
+    },
+    [pushTimezoneToServer],
+  );
 
   const timezone = stored ?? BROWSER_TIMEZONE_VALUE;
   const resolved = resolveChartTimezone(timezone);

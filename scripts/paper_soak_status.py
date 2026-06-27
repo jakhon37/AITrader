@@ -89,6 +89,7 @@ def main() -> int:
 
     pipeline = _fetch_json("/api/health/pipeline")
     ops = _fetch_json("/api/health/ops")
+    soak = _fetch_json("/api/health/soak")
     portfolio = _fetch_json("/api/portfolio/state")
 
     if pipeline:
@@ -106,6 +107,17 @@ def main() -> int:
             block = ops.get(probe, {})
             if block:
                 print(f"  {probe}: {block.get('status')} — {block.get('message', '')}")
+
+    if soak:
+        print()
+        print("Paper soak (Tier 4):")
+        print(f"  Status:    {soak.get('status')}")
+        print(f"  Progress:  {soak.get('message', '')}")
+        if soak.get("started_at"):
+            print(f"  Started:   {soak.get('started_at')}")
+            print(f"  Elapsed:   {soak.get('elapsed_days', 0):.2f} days ({soak.get('elapsed_hours', 0):.1f} h)")
+            print(f"  Remaining: {soak.get('remaining_days', 0):.2f} days")
+            print(f"  Target:    {soak.get('target_days', 14)} days")
     print()
 
     if portfolio:

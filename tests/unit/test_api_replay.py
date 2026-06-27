@@ -255,3 +255,17 @@ def test_replay_release_idempotent(client):
     assert data["status"] == "success"
     assert data["had_session"] is False
 
+
+def test_replay_release_restores_live_clock(client):
+    """Releasing replay must reset the global clock to wall-clock UTC."""
+    from src.core.clock import ClockMode, LiveClock, ReplayClock, clock_mode, now, set_clock
+
+    set_clock(ReplayClock(datetime(2024, 8, 29, tzinfo=timezone.utc)))
+    client.app.state.live_clock = LiveClock()
+
+    response = client.post("/api/replay/release")
+    assert response.status_code == 200
+
+    assert clock_mode() == ClockMode.LIVE
+    assert now().year >= 2026
+

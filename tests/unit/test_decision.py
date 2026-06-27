@@ -224,3 +224,38 @@ async def test_decision_engine_pipeline() -> None:
     assert len(signals) == 0
 
     await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_decision_engine_dedupes_repeated_directional_fusion() -> None:
+    cfg = AppConfig()
+    bus = MockBus()
+    engine = DecisionEngine(config=cfg, bus=bus)
+    await engine.start()
+
+    now_utc = datetime.now(timezone.utc)
+    t_sig = TechnicalSignal(
+        signal_id="t1",
+        instrument=Instrument.EURUSD,
+        timestamp=now_utc,
+        valid_until=now_utc + timedelta(hours=1),
+        direction=Direction.LONG,
+        confidence=0.8,
+        strength=SignalStrength.STRONG,
+        regime=MarketRegime.TRENDING,
+        confluence_score=1.0,
+        per_timeframe=[],
+        primary_tf=Timeframe.H1,
+        entry_price=1.0850,
+        stop_loss=1.0800,
+        take_profit=1.0950,
+    )
+    await bus.publish(BusChannel.TECHNICAL_SIGNAL, t_sig)
+    assert len([p for p in bus.published if p[0] == BusChannel.TRADE_SIGNAL]) == 1
+
+    bus.published.clear()
+    repeat = t_sig.model_copy(update={"signal_id": "t2"})
+    await bus.publish(BusChannel.TECHNICAL_SIGNAL, repeat)
+    assert len([p for p in bus.published if p[0] == BusChannel.TRADE_SIGNAL]) == 0
+
+    await engine.stop()

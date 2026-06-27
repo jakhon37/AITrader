@@ -56,6 +56,8 @@ class TechnicalEngine:
         self.loader = TechnicalDataLoader(store)
         self.is_running = False
         self.enabled = True
+        # Skip re-processing the same primary bar close (chart focus / store replay).
+        self._last_processed_bar_close: dict[Instrument, datetime] = {}
 
     @property
     def instruments_config(self) -> dict[Instrument, InstrumentConfig]:
@@ -73,6 +75,27 @@ class TechnicalEngine:
         await self.bus.subscribe(BusChannel.OHLCV_BAR, self.on_ohlcv_bar)
         self.is_running = True
         _log.info("technical_engine_started", message="Technical analysis engine started.")
+
+    async def bootstrap_latest_signals(self) -> None:
+        """Seed technical cache from the latest stored primary-TF bar after restart."""
+        from src.core.instruments import get_enabled_instruments
+        from src.data.scheduler.store_ops import bars_from_store
+
+        for inst in get_enabled_instruments():
+            cfg = self.instruments_config.get(inst)
+            if cfg is None:
+                continue
+            primary_tf = cfg.primary_timeframe
+            try:
+                completed, _ = bars_from_store(self.store, inst, primary_tf)
+                await self.on_ohlcv_bar(completed)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "technical_bootstrap_skip",
+                    instrument=inst.value,
+                    timeframe=primary_tf.value,
+                    error=str(exc),
+                )
 
     async def stop(self) -> None:
         """Stop the engine and unsubscribe from OHLCV_BAR channel."""
@@ -109,6 +132,15 @@ class TechnicalEngine:
         # Candle close time is open time + timeframe duration
         delta = timeframe_to_timedelta(primary_tf)
         current_time = payload.timestamp + delta
+
+        last_close = self._last_processed_bar_close.get(instrument)
+        if last_close is not None and current_time <= last_close:
+            _log.debug(
+                "technical_bar_deduped",
+                instrument=instrument.value,
+                bar_close=current_time.isoformat(),
+            )
+            return
 
         _log.info(
             "primary_bar_received",
@@ -228,6 +260,7 @@ class TechnicalEngine:
             )
 
             # 9. Publish onto bus
+            self._last_processed_bar_close[instrument] = current_time
             await self.bus.publish(BusChannel.TECHNICAL_SIGNAL, signal)
 
             _log.info(

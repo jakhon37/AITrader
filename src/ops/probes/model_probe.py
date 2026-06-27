@@ -11,8 +11,14 @@ from typing import Any
 class ModelRegistryProbe:
     """Verify a prod model exists and report registry summary."""
 
-    def __init__(self, registry_path: str | Path = "models/registry/index.json") -> None:
+    def __init__(
+        self,
+        registry_path: str | Path = "models/registry/index.json",
+        *,
+        require_prod: bool = True,
+    ) -> None:
         self._registry_path = Path(registry_path)
+        self._require_prod = require_prod
 
     def check(self, model_name: str | None = None) -> dict[str, Any]:
         if not self._registry_path.exists():
@@ -43,12 +49,18 @@ class ModelRegistryProbe:
                     "metrics": meta.get("metrics", {}),
                 })
 
-        status = "ok" if prod_models else "degraded"
-        message = (
-            f"{len(prod_models)} prod model(s)"
-            if prod_models
-            else "No prod model promoted — fusion uses rule-based weights"
-        )
+        if prod_models:
+            status = "ok"
+            message = f"{len(prod_models)} prod model(s)"
+        elif self._require_prod:
+            status = "degraded"
+            message = "No prod model promoted — fusion uses rule-based weights"
+        else:
+            status = "ok"
+            message = (
+                f"No prod model (dev mode) — {len(versions)} version(s), "
+                "fusion uses rule-based weights"
+            )
 
         return {
             "status": status,

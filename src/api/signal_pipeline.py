@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.core.clock import LiveClock, set_clock
 from src.core.logging import get_logger
 
 _log = get_logger("D10-WEBUI")
+
+
+def restore_live_clock(live_clock: Any | None = None) -> None:
+    """Reset the global VirtualClock to wall-clock UTC after replay ends."""
+    clock = live_clock if live_clock is not None else LiveClock()
+    set_clock(clock)
+    _log.info("live_clock_restored")
 
 
 async def pause_live_signal_pipeline(app: Any) -> None:

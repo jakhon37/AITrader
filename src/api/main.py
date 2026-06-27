@@ -36,12 +36,14 @@ def bootstrap_dependencies():
 bootstrap_dependencies()
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.middleware import RequestLoggingMiddleware
-from src.api.routes import config, data, health, portfolio, signals, replay
+from src.api.display_prefs import DisplayPrefs
+from src.api.routes import config, data, health, portfolio, preferences, signals, replay
 from src.api.ws.handlers import setup_ws_bridge
 from src.api.ws.manager import ws_manager
 from src.core.bus import create_bus
@@ -63,8 +65,13 @@ from src.decision.chart_markers import ChartMarkerStore
 from src.execution.engine import ExecutionEngine
 from src.technical.engine import TechnicalEngine
 from src.fundamental.agent import FundamentalAgent
+from src.fundamental.signal_store import FundamentalSignalStore
+from src.ops.health_store import SystemHealthStore
+from src.signals.registry import SignalStores
+from src.signals.stores import TechnicalSignalStore, TradeSignalStore
 from src.notifier.service import NotifierService
 from src.ops.monitor import OpsMonitor
+from src.ops.paper_soak import record_soak_start
 import asyncio
 import os
 from pathlib import Path
@@ -99,6 +106,18 @@ class _TestSchedulerStub:
         return None
 
 
+def _init_signal_stores(data_dir: str | Path, execution_store: Any = None) -> SignalStores:
+    state_dir = Path(data_dir) / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return SignalStores(
+        fundamental=FundamentalSignalStore(state_dir / "fundamental_signals.db"),
+        technical=TechnicalSignalStore(state_dir / "technical_signals.db"),
+        trade=TradeSignalStore(state_dir / "trade_signals.db"),
+        health=SystemHealthStore(state_dir / "system_health.db"),
+        execution=execution_store,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for setting up bus subscriptions and store connections."""
@@ -111,6 +130,11 @@ async def lifespan(app: FastAPI):
     data_store = DataStore(base_dir=app_config.data.data_dir)
     app.state.data_store = data_store
     app.state.app_config = app_config
+    app.state.display_prefs = DisplayPrefs(data_dir=app_config.data.data_dir)
+
+    signal_stores = _init_signal_stores(app_config.data.data_dir)
+    app.state.signal_stores = signal_stores
+    app.state.fundamental_signal_store = signal_stores.fundamental
 
     # 3. Chart marker store (alternating LONG/SHORT flips for chart overlay)
     if os.environ.get("AITRADER_TESTING") == "1":
@@ -125,7 +149,14 @@ async def lifespan(app: FastAPI):
     # 4. Create Bus & Setup WebSocket Bridge
     bus = create_bus(app_config.core.bus_backend)
     app.state.bus = bus
-    await setup_ws_bridge(bus, chart_marker_store=chart_marker_store)
+    await setup_ws_bridge(
+        bus,
+        chart_marker_store=chart_marker_store,
+        fundamental_signal_store=signal_stores.fundamental,
+        technical_signal_store=signal_stores.technical,
+        trade_signal_store=signal_stores.trade,
+        health_store=signal_stores.health,
+    )
 
     app.state.active_replay_session = None
     app.state.live_signal_pipeline_paused = False
@@ -134,6 +165,7 @@ async def lifespan(app: FastAPI):
         engine = ExecutionEngine(config=app_config, bus=bus)
         app.state.engine = engine
         app.state.execution_store = engine.execution_store
+        signal_stores.execution = engine.execution_store
         engine.start()
         app.state.scheduler = _TestSchedulerStub()
         app.state.dukascopy_feed = None
@@ -150,6 +182,7 @@ async def lifespan(app: FastAPI):
     engine = ExecutionEngine(config=app_config, bus=bus)
     app.state.engine = engine
     app.state.execution_store = engine.execution_store
+    signal_stores.execution = engine.execution_store
     engine.start()
     await engine.seed_portfolio_state()
     _log.info("execution_engine_started", configured_broker=configured_broker, active="sim")
@@ -166,6 +199,7 @@ async def lifespan(app: FastAPI):
     app.state.live_signal_pipeline_paused = False
     await technical_engine.start()
     await decision_engine.start()
+    await technical_engine.bootstrap_latest_signals()
     _log.info(
         "live_signal_spine_started",
         technical="D04",
@@ -175,6 +209,7 @@ async def lifespan(app: FastAPI):
     # 6. Initialize Live Clock & DataScheduler
     clock = LiveClock()
     set_clock(clock)
+    app.state.live_clock = clock
     pipeline = app_config.data.pipeline
     dukascopy_feed = DukascopyFeed(
         live_m1_cache_ttl_sec=pipeline.live_m1_cache_ttl_sec,
@@ -221,6 +256,7 @@ async def lifespan(app: FastAPI):
         store=data_store,
         clock=clock,
         newsapi_key=os.environ.get("NEWSAPI_KEY"),
+        finnhub_key=os.environ.get("FINNHUB_API_KEY"),
         poll_interval_seconds=news_poll,
     )
     app.state.news_fetcher = news_fetcher
@@ -245,6 +281,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.fundamental_agent = fundamental_agent
     await fundamental_agent.start()
+    asyncio.create_task(fundamental_agent.poll_news())
     _log.info("fundamental_pipeline_started", backend=getattr(fund_cfg, "sentiment_backend", "mock") if fund_cfg else "mock")
 
     # 10. Additional D02 APIs from .env (FRED macro data)
@@ -269,13 +306,12 @@ async def lifespan(app: FastAPI):
             execution_store=engine.execution_store,
             fundamental_agent=fundamental_agent,
             data_store=data_store,
+            display_prefs=app.state.display_prefs,
+            signal_stores=signal_stores,
         )
         app.state.notifier = notifier
-        notifier.seed_portfolio_cache(engine.execution_store.get_latest_portfolio())
         await notifier.start()
-        bootstrap_signals = await fundamental_agent.publish_dev_bootstrap()
-        if bootstrap_signals:
-            notifier.seed_fundamental_cache(bootstrap_signals)
+        await fundamental_agent.publish_dev_bootstrap()
         _log.info("notifier_service_started")
     else:
         _log.info("notifier_skipped_no_telegram_key")
@@ -289,10 +325,20 @@ async def lifespan(app: FastAPI):
         scheduler=scheduler,
         notifier_active=bool(os.environ.get("TELEGRAM_BOT_TOKEN")),
         fundamental_active=True,
+        signal_stores=signal_stores,
+        execution_store=engine.execution_store,
     )
     app.state.ops_monitor = ops_monitor
     await ops_monitor.start()
     _log.info("ops_monitor_started")
+
+    soak_state = record_soak_start(data_dir=app_config.data.data_dir)
+    app.state.paper_soak = soak_state
+    _log.info(
+        "paper_soak_tracked",
+        started_at=soak_state.get("started_at"),
+        target_days=soak_state.get("target_days"),
+    )
 
     _log.info("webui_api_started")
     yield
@@ -358,6 +404,7 @@ app.include_router(portfolio.router, prefix="/api")
 app.include_router(config.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(replay.router, prefix="/api")
+app.include_router(preferences.router, prefix="/api")
 
 
 # 5. WebSocket Route Mount

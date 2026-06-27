@@ -50,6 +50,17 @@ export interface ChartMarker {
   created_at: string;
 }
 
+export interface NewsArticle {
+  article_id: string;
+  headline: string;
+  url: string | null;
+  source: string;
+  published_at: string;
+  instruments: string[];
+  body_snippet: string | null;
+  fetched_at: string;
+}
+
 export interface FundamentalSignal {
   signal_id: string;
   instrument: string;

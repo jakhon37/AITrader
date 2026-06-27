@@ -176,6 +176,36 @@ def bars_from_store(
     )
 
 
+def hydrate_last_emitted_from_store(
+    store: DataStore,
+    active_pairs: list[tuple[Instrument, Timeframe]],
+) -> dict[tuple[Instrument, Timeframe], datetime]:
+    """Seed scheduler emission cursor from Parquet so restarts do not replay old bars."""
+    seeded: dict[tuple[Instrument, Timeframe], datetime] = {}
+    for instrument, timeframe in active_pairs:
+        try:
+            last_ts, _ = store.peek_latest_ohlcv(instrument, timeframe)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug(
+                "scheduler_hydrate_skip",
+                instrument=instrument.value,
+                timeframe=timeframe.value,
+                error=str(exc),
+            )
+            continue
+        if last_ts is None:
+            continue
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=timezone.utc)
+        seeded[(instrument, timeframe)] = last_ts
+    if seeded:
+        _log.info(
+            "scheduler_last_emitted_hydrated",
+            pairs=[(i.value, tf.value) for i, tf in seeded],
+        )
+    return seeded
+
+
 def load_bar_from_store(
     store: DataStore,
     instrument: Instrument,

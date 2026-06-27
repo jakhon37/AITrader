@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from src.core.bus import Bus
 from src.core.contracts import BusChannel, HealthStatus, Instrument, SystemHealthEvent, Timeframe
 from src.core.ids import new_signal_id
-from src.core.instruments import get_enabled_instruments
+from src.core.instruments import get_enabled_instruments, get_scheduler_active_pairs
 from src.core.logging import get_logger
 from src.data.store import DataStore
 from src.ops.probes.data_freshness_probe import DataFreshnessProbe
 from src.ops.probes.exec_probe import ExecutionProbe
 from src.ops.probes.model_probe import ModelRegistryProbe
 from src.ops.probes.signal_probe import SignalFlowProbe
+from src.signals.registry import SignalStores
 from src.ops.division_health import publish_division_heartbeats
 
 _log = get_logger("D11-OPS")
@@ -36,6 +38,8 @@ class OpsMonitor:
         scheduler: Any = None,
         notifier_active: bool = False,
         fundamental_active: bool = False,
+        signal_stores: SignalStores | None = None,
+        execution_store: Any = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -48,9 +52,12 @@ class OpsMonitor:
         self._model_name = model_name
 
         self._data_probe = DataFreshnessProbe(store)
-        self._signal_probe = SignalFlowProbe()
+        self._signal_probe = SignalFlowProbe(signal_stores=signal_stores)
+        self._execution_store = execution_store
         self._exec_probe = ExecutionProbe()
-        self._model_probe = ModelRegistryProbe()
+        env = getattr(app_config, "env", None) or os.environ.get("ENV", "dev")
+        require_prod = env == "prod"
+        self._model_probe = ModelRegistryProbe(require_prod=require_prod)
 
         self._running = False
         self._task: Optional[asyncio.Task[None]] = None
@@ -119,15 +126,15 @@ class OpsMonitor:
         }
 
     async def run_once(self) -> dict[str, Any]:
-        from src.api import state as api_state
-
         now = datetime.now(timezone.utc)
         enabled = get_enabled_instruments(self._app_config)
-        pairs = [(inst, Timeframe.M1) for inst in enabled]
+        pairs = get_scheduler_active_pairs(self._app_config)
 
         drawdown_pct = None
-        if api_state.latest_portfolio is not None:
-            drawdown_pct = api_state.latest_portfolio.drawdown_pct
+        if self._execution_store is not None:
+            portfolio = self._execution_store.get_latest_portfolio()
+            if portfolio is not None:
+                drawdown_pct = portfolio.drawdown_pct
 
         scheduler_pairs: dict[str, dict[str, Any]] = {}
         scheduler_error: str | None = None

@@ -6,13 +6,15 @@ and integrates inbound commands with the Telegram Bot API client.
 
 from __future__ import annotations
 
-import asyncio
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from src.api.display_prefs import DisplayPrefs
     from src.data.store import DataStore
     from src.execution.store import ExecutionStore
     from src.fundamental.agent import FundamentalAgent
+    from src.signals.registry import SignalStores
 
 from src.core.clock import now
 from src.core.config import AppConfig
@@ -26,7 +28,7 @@ from src.core.contracts import (
 )
 from src.core.logging import get_logger
 from src.notifier.aggregator import MessageAggregator
-from src.notifier.commands import CommandCache, CommandProcessor
+from src.notifier.commands import CommandProcessor
 from src.notifier.formatters import (
     format_calendar_briefing,
     format_fundamental_signal,
@@ -50,132 +52,126 @@ class NotifierService:
         client: TelegramClient | None = None,
         router: MessageRouter | None = None,
         aggregator: MessageAggregator | None = None,
-        cache: CommandCache | None = None,
         processor: CommandProcessor | None = None,
         execution_store: Optional["ExecutionStore"] = None,
         fundamental_agent: Optional["FundamentalAgent"] = None,
         data_store: Optional["DataStore"] = None,
+        display_prefs: Optional["DisplayPrefs"] = None,
+        signal_stores: Optional["SignalStores"] = None,
     ) -> None:
         self.config = config
         self.bus = bus
 
-        # Configuration dictionary for routing
         notifier_cfg = getattr(config, "notifier", {}).get("telegram", {}) if hasattr(config, "notifier") else None
-        
+
         self.client = client or TelegramClient()
         self.router = router or MessageRouter(config_dict={"telegram": notifier_cfg} if notifier_cfg else None)
         self.aggregator = aggregator or MessageAggregator(send_callback=self.client.send_message)
-
-        # Cache & command processor initialization
-        self.cache = cache or CommandCache()
+        self.display_prefs = display_prefs
+        self.signal_stores = signal_stores
         self.processor = processor or CommandProcessor(
             bus=self.bus,
             config=self.config,
-            cache=self.cache,
+            signal_stores=signal_stores,
             execution_store=execution_store,
             fundamental_agent=fundamental_agent,
             data_store=data_store,
+            display_prefs=display_prefs,
         )
 
-        # Subscribe to updates
         self.client.register_inbound_handler(self.handle_inbound_message)
-
         self._running = False
+        self._last_trade_alert: dict[str, tuple[datetime, str]] = {}
+        self._trade_alert_cooldown = timedelta(minutes=15)
+
+    def _chart_timezone(self) -> str:
+        if self.display_prefs is not None:
+            return self.display_prefs.get_chart_timezone()
+        return "UTC"
 
     async def start(self) -> None:
-        """Start client loops and subscribe to relevant bus channels."""
         if self._running:
             return
         self._running = True
-
-        # Start bot HTTP long-polling and outbound queue loops
         await self.client.start()
-
-        # Subscribe to bus channels
         await self.bus.subscribe(BusChannel.TRADE_SIGNAL, self.handle_trade_signal)
         await self.bus.subscribe(BusChannel.ORDER_EVENT, self.handle_order_event)
         await self.bus.subscribe(BusChannel.FUNDAMENTAL_SIGNAL, self.handle_fundamental_signal)
         await self.bus.subscribe(BusChannel.SYSTEM_HEALTH, self.handle_system_health)
         await self.bus.subscribe(BusChannel.PORTFOLIO_UPDATE, self.handle_portfolio_update)
-
         _log.info("notifier_service_started")
 
     async def stop(self) -> None:
-        """Unsubscribe from bus channels and stop client loops."""
         if not self._running:
             return
         self._running = False
-
-        # Unsubscribe from bus channels
         await self.bus.unsubscribe(BusChannel.TRADE_SIGNAL, self.handle_trade_signal)
         await self.bus.unsubscribe(BusChannel.ORDER_EVENT, self.handle_order_event)
         await self.bus.unsubscribe(BusChannel.FUNDAMENTAL_SIGNAL, self.handle_fundamental_signal)
         await self.bus.unsubscribe(BusChannel.SYSTEM_HEALTH, self.handle_system_health)
         await self.bus.unsubscribe(BusChannel.PORTFOLIO_UPDATE, self.handle_portfolio_update)
-
-        # Shutdown active timers and clients
         await self.aggregator.cancel_all_timers()
         await self.client.stop()
-
         _log.info("notifier_service_stopped")
 
     async def handle_inbound_message(self, message: dict[str, Any]) -> None:
-        """Callback triggered when an authorized inbound user update is received."""
         await self.processor.handle_message(message, self.client.send_message)
 
-    async def handle_trade_signal(self, signal: TradeSignal) -> None:
-        """Route TradeSignals immediately to Telegram (never batched)."""
-        self.cache.add_trade_signal(signal)
+    def _should_alert_trade_signal(self, signal: TradeSignal, current: datetime) -> bool:
+        if not self.router.should_send_trade_signal(signal, current):
+            return False
 
-        if self.router.should_send_trade_signal(signal, now()):
-            text = format_trade_signal(signal)
+        inst = signal.instrument.value
+        fingerprint = (
+            f"{signal.direction.value}:{int(signal.confidence * 100)}:"
+            f"{signal.suggested_side.value if signal.suggested_side else 'none'}"
+        )
+        last = self._last_trade_alert.get(inst)
+        if last is not None:
+            last_at, last_fp = last
+            if (
+                fingerprint == last_fp
+                and current - last_at < self._trade_alert_cooldown
+            ):
+                return False
+
+        self._last_trade_alert[inst] = (current, fingerprint)
+        return True
+
+    async def handle_trade_signal(self, signal: TradeSignal) -> None:
+        current = now()
+        if self._should_alert_trade_signal(signal, current):
+            text = format_trade_signal(signal, self._chart_timezone())
             await self.client.send_message(text)
 
     async def handle_order_event(self, event: OrderEvent) -> None:
-        """Route OrderEvents (fills, cancellations, rejections) to Telegram."""
         if self.router.should_send_order_event(event, now()):
             text = format_order_event(event)
             await self.client.send_message(text)
 
     async def handle_fundamental_signal(self, signal: FundamentalSignal) -> None:
-        """Throttles and routes FundamentalSignals to Telegram."""
-        self.cache.add_fundamental_signal(signal)
         current = now()
-
         fund_cfg = getattr(self.config, "fundamental", None)
         calendar_min = (
             getattr(fund_cfg, "calendar_telegram_min_impact", "high") if fund_cfg else "high"
         )
 
         if self.router.should_send_calendar_briefing(signal, current, min_impact=calendar_min):
-            text = format_calendar_briefing(signal)
+            text = format_calendar_briefing(signal, self._chart_timezone())
             await self.client.send_message(text)
             return
 
         if self.router.should_send_fundamental_signal(signal, current):
             if self.aggregator.should_send_fundamental(signal, current):
-                text = format_fundamental_signal(signal)
+                text = format_fundamental_signal(signal, self._chart_timezone())
                 await self.client.send_message(text)
 
     async def handle_system_health(self, event: SystemHealthEvent) -> None:
-        """Throttles and routes SystemHealthEvents to Telegram."""
-        self.cache.add_health(event)
-
         if self.router.should_send_system_health(event, now()):
             if self.aggregator.should_send_health(event, now()):
-                text = format_system_health(event)
+                text = format_system_health(event, self._chart_timezone())
                 await self.client.send_message(text)
 
     async def handle_portfolio_update(self, state: PortfolioState) -> None:
-        """Silently update the local portfolio cache for inbound query commands."""
-        self.cache.portfolio_state = state
-
-    def seed_portfolio_cache(self, state: Optional[PortfolioState]) -> None:
-        """Prime command cache from SQLite on startup."""
-        if state is not None:
-            self.cache.portfolio_state = state
-
-    def seed_fundamental_cache(self, signals: list[FundamentalSignal]) -> None:
-        """Prime /fundamental command cache (e.g. after dev bootstrap publish)."""
-        for signal in signals:
-            self.cache.add_fundamental_signal(signal)
+        """Portfolio snapshots are persisted by ExecutionEngine — no local cache."""
+        return

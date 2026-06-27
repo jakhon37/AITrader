@@ -39,7 +39,7 @@ def test_exec_probe_counts_audit_events(tmp_path: Path) -> None:
     assert result["event_counts"]["error"] == 1
 
 
-def test_model_probe_reports_no_prod(tmp_path: Path) -> None:
+def test_model_probe_reports_no_prod_when_required(tmp_path: Path) -> None:
     registry = tmp_path / "index.json"
     meta_dir = tmp_path / "metadata"
     meta_dir.mkdir()
@@ -48,17 +48,21 @@ def test_model_probe_reports_no_prod(tmp_path: Path) -> None:
     registry.write_text(
         json.dumps({"versions": {"lstm_transformer:v1": "metadata/lstm_transformer_v1.json"}})
     )
-    result = ModelRegistryProbe(registry_path=registry).check("lstm_transformer")
+    result = ModelRegistryProbe(registry_path=registry, require_prod=True).check("lstm_transformer")
     assert result["status"] == "degraded"
     assert result["prod_models"] == []
 
 
-def test_signal_probe_stale_during_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.api import state as api_state
+def test_signal_probe_stale_during_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from src.signals.stores import TechnicalSignalStore
 
     now = datetime(2026, 6, 26, 14, 0, tzinfo=timezone.utc)
     valid_until = now + timedelta(hours=1)
-    api_state.latest_technical[Instrument.EURUSD.value] = TechnicalSignal(
+    tech_store = TechnicalSignalStore(tmp_path / "technical.db")
+    tech_store.upsert_signal(TechnicalSignal(
         signal_id="sig-1",
         timestamp=now - timedelta(hours=3),
         valid_until=valid_until,
@@ -83,12 +87,14 @@ def test_signal_probe_stale_during_session(monkeypatch: pytest.MonkeyPatch) -> N
         entry_price=None,
         stop_loss=None,
         take_profit=None,
-    )
+    ))
     monkeypatch.setattr(
         "src.ops.probes.signal_probe.is_instrument_session_open",
         lambda *_args, **_kwargs: True,
     )
-    result = SignalFlowProbe(stale_minutes=60).check([Instrument.EURUSD], now=now)
+    result = SignalFlowProbe(technical_store=tech_store, stale_minutes=60).check(
+        [Instrument.EURUSD], now=now,
+    )
     assert result["status"] == "degraded"
 
 

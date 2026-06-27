@@ -91,6 +91,7 @@ class FundamentalAgent:
         self._poll_task: Optional[asyncio.Task] = None
         self._poll_interval: int = 600
         self._last_poll_time = now() - timedelta(minutes=15)
+        self._bootstrap_lookback = True
 
     async def get_openrouter_status(self) -> Any:
         """OpenRouter narrative + sentiment model status for /status reporting."""
@@ -116,7 +117,28 @@ class FundamentalAgent:
         if fund is not None:
             self._poll_interval = getattr(fund, "poll_interval_seconds", 600)
         self._poll_task = asyncio.create_task(self._poll_loop())
+        if self.synthesizer.api_key:
+            asyncio.create_task(self._warm_openrouter_models())
         _log.info("fundamental_agent_started")
+
+    async def _warm_openrouter_models(self) -> None:
+        """Probe and assign a validated free model at startup."""
+        from src.fundamental.openrouter_models import select_validated_free_model
+
+        try:
+            model = await select_validated_free_model(
+                self.synthesizer.api_key or "",
+                preferred=self.synthesizer._preferred_models,  # noqa: SLF001
+                purpose="narrative",
+            )
+            if model:
+                self.synthesizer._model = model  # noqa: SLF001
+                self.synthesizer._last_model_selection = now()  # noqa: SLF001
+                _log.info("openrouter_startup_model_ready", model=model)
+            else:
+                _log.warning("openrouter_startup_no_validated_model")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("openrouter_startup_warm_failed", error=str(exc))
 
     async def stop(self) -> None:
         """Stop the background tasks and clean up resources."""
@@ -200,7 +222,11 @@ class FundamentalAgent:
     async def poll_news(self) -> None:
         """Query news from DataStore since last poll time and score/publish signals."""
         current_time = now()
-        start_time = self._last_poll_time
+        if self._bootstrap_lookback:
+            start_time = current_time - timedelta(hours=24)
+            self._bootstrap_lookback = False
+        else:
+            start_time = self._last_poll_time
         _log.debug("fundamental_agent_poll_news", start=start_time.isoformat(), end=current_time.isoformat())
 
         # Retrieve new articles from store

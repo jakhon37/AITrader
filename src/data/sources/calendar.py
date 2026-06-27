@@ -40,6 +40,7 @@ from src.core.exceptions import DataError
 from src.core.ids import new_signal_id
 from src.core.logging import get_logger
 from src.data.models import RawCalendarEvent
+from src.data.retention import purge_stale_calendar
 from src.data.store import DataStore
 
 _log = get_logger("D02-DATA.calendar")
@@ -171,6 +172,10 @@ class CalendarFetcher:
             return
         self._store.write_calendar_events(events)
         _log.info("calendar_refreshed", event_count=len(events))
+        try:
+            purge_stale_calendar(self._store, self._clock)
+        except Exception as exc:
+            _log.warning("calendar_retention_failed", error=str(exc))
 
     async def _scrape_forex_factory(self) -> list[RawCalendarEvent]:
         """Scrape Forex Factory's weekly calendar HTML.

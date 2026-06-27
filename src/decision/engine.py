@@ -210,6 +210,21 @@ class DecisionEngine:
         # Fused direction is directional (LONG or SHORT)
         self.state.prior_was_directional[instrument] = True
 
+        fusion_key = (
+            t_sig.timestamp,
+            fusion.direction,
+            round(fusion.confidence, 3),
+            round(t_sig.entry_price or 0.0, 5),
+        )
+        if self.state.last_fusion_fingerprint.get(instrument) == fusion_key:
+            _log.debug(
+                "decision_trade_deduped",
+                instrument=instrument.value,
+                direction=fusion.direction.value,
+            )
+            return
+        self.state.last_fusion_fingerprint[instrument] = fusion_key
+
         # 6. Sizer calculation
         suggested_size = compute_suggested_size(
             entry_price=t_sig.entry_price,
@@ -289,6 +304,8 @@ class DecisionEngine:
 
         self.state.last_published_direction[instrument] = direction
         self.state.last_fused_technical_id[instrument] = t_sig.signal_id
+        if direction == Direction.NEUTRAL:
+            self.state.last_fusion_fingerprint.pop(instrument, None)
         await self.bus.publish(BusChannel.TRADE_SIGNAL, trade_signal)
         _log.info(
             "trade_signal_published",

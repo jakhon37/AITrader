@@ -22,6 +22,7 @@ from src.backtest.engine import MockDecisionEngine, MockExecutionEngine
 from src.backtest.replay._utils import get_buffer_duration
 from src.technical.engine import TechnicalEngine
 from src.fundamental.agent import FundamentalAgent
+from src.fundamental.sentiment import SentimentScorer
 from src.core.config import load_config
 
 if TYPE_CHECKING:
@@ -74,20 +75,19 @@ class StrategyLoopMixin:
         await decision_engine.start()
         await exec_engine.start()
 
-        # D03 Fundamental for replay (use mock for deterministic historical runs)
+        # D03 Fundamental for replay (mock scorer for deterministic historical runs)
+        fund_agent: FundamentalAgent | None = None
         try:
-            replay_fund_cfg = load_config() if hasattr(load_config, '__call__') else None
+            replay_cfg = load_config()
             fund_agent = FundamentalAgent(
-                config=replay_fund_cfg or type('obj', (object,), {'fundamental': type('f', (object,), {'sentiment_backend': 'mock'})() })(),
-                bus=self.bus,
-                store=self.store,
+                config=replay_cfg,
+                bus=self.bus,  # type: ignore[attr-defined]
+                store=self.store,  # type: ignore[attr-defined]
+                sentiment_scorer=SentimentScorer(backend="mock"),
             )
-            # Force mock for replay
-            fund_agent.sentiment_scorer = type(fund_agent.sentiment_scorer)(backend='mock')
             await fund_agent.start()
-            # we don't store it long term, it will publish to the isolated bus
-        except Exception:
-            pass  # non-fatal in replay for now
+        except Exception as exc:
+            logger.warning("Replay fundamental agent failed to start: %s", exc)
 
         # ── Initial bar buffer ───────────────────────────────────────────
         buffer_dur = get_buffer_duration(self.timeframe_enum)  # type: ignore[attr-defined]
@@ -204,6 +204,8 @@ class StrategyLoopMixin:
         except asyncio.CancelledError:
             pass
         finally:
+            if fund_agent is not None:
+                await fund_agent.stop()
             if self.tech_engine:  # type: ignore[attr-defined]
                 await self.tech_engine.stop()
             await decision_engine.stop()

@@ -102,4 +102,4 @@ fundamental:
   calendar_briefing_enabled: true
   calendar_min_impact: "medium"       # low | medium | high
   calendar_telegram_min_impact: "medium"
-  dev_bootstrap_signals: true
+  dev_bootstrap_signals: false

@@ -19,6 +19,7 @@ from src.data.scheduler.bars import normalize_wick
 from src.data.pipeline.resample import resample_fast_timeframes_recent
 from src.data.scheduler.store_ops import (
     bars_from_store,
+    hydrate_last_emitted_from_store,
     save_bar_to_store,
     sync_m1_window_to_store,
 )
@@ -62,6 +63,9 @@ class LiveSchedulerMixin:
     async def run(self: DataScheduler) -> None:
         """Start the live scheduling loop.  Blocks until ``stop()`` is called."""
         self._running = True
+        self._last_emitted.update(
+            hydrate_last_emitted_from_store(self._store, self._active_pairs)
+        )
         _log.info(
             "scheduler_started",
             pairs=[(i.value, tf.value) for i, tf in self._active_pairs],

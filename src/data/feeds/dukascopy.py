@@ -355,7 +355,9 @@ class DukascopyFeed(OHLCVFeed):
             )
             if today_daily is not None and not today_daily.empty:
                 chunks.append(today_daily)
-            if self._tick_enabled:
+            # Live polls use today's daily .bi5 only — tick hours often timeout and
+            # mix a different price scale than our Dukascopy parquet pipeline.
+            if self._tick_enabled and not live_mode:
                 today_m1 = self._fetch_today_m1_from_ticks(symbol, live_mode=live_mode)
                 if not today_m1.empty:
                     chunks.append(today_m1)

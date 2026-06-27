@@ -334,6 +334,34 @@ class TestNewsFetcherHelpers:
 
         assert _is_relevant("Local sports team wins championship", None) is False
 
+    def test_instruments_from_finnhub_related(self) -> None:
+        from src.data.sources.news_fetcher import _instruments_from_finnhub_related
+
+        result = _instruments_from_finnhub_related("OANDA:EUR_USD,OANDA:USD_JPY")
+        assert result == ["EURUSD", "USDJPY"]
+
+    def test_parse_finnhub_item(self) -> None:
+        from src.data.sources.news_fetcher import NewsFetcher
+        from unittest.mock import MagicMock
+
+        fetcher = NewsFetcher(store=MagicMock(), clock=MagicMock())
+        article = fetcher._parse_finnhub_item(
+            {
+                "id": 99,
+                "datetime": 1719392400,
+                "headline": "Euro rises after ECB holds rates",
+                "summary": "EURUSD climbed on policy guidance.",
+                "source": "Reuters",
+                "url": "https://example.com/eur",
+                "related": "OANDA:EUR_USD",
+            },
+            category="forex",
+        )
+        assert article is not None
+        assert article.article_id == "finnhub:99"
+        assert article.instruments == ["EURUSD"]
+        assert "finnhub/Reuters/forex" in article.source
+
 
 # ── CalendarFetcher HTML parser ───────────────────────────────────────────────
 

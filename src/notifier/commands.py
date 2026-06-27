@@ -11,11 +11,14 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
+    from src.api.display_prefs import DisplayPrefs
     from src.data.store import DataStore
     from src.execution.store import ExecutionStore
     from src.fundamental.agent import FundamentalAgent
+    from src.signals.registry import SignalStores
 
 from src.core.clock import now
+from src.core.display_time import format_chart_time
 from src.core.contracts import (
     BusChannel,
     Direction,
@@ -38,28 +41,6 @@ from src.notifier.chat import (
 _log = get_logger("D07-NOTIFIER")
 
 
-class CommandCache:
-    """Stores the latest state snapshots received from the bus for remote commands."""
-
-    def __init__(self) -> None:
-        self.health_states: Dict[str, SystemHealthEvent] = {}
-        self.portfolio_state: Optional[PortfolioState] = None
-        self.trade_signals: List[TradeSignal] = []
-        self.fundamental_signals: Dict[str, FundamentalSignal] = {}
-
-    def add_health(self, event: SystemHealthEvent) -> None:
-        self.health_states[event.division] = event
-
-    def add_trade_signal(self, signal: TradeSignal) -> None:
-        self.trade_signals.append(signal)
-        # Keep only the last 20 signals to save memory
-        if len(self.trade_signals) > 20:
-            self.trade_signals.pop(0)
-
-    def add_fundamental_signal(self, signal: FundamentalSignal) -> None:
-        self.fundamental_signals[signal.instrument.value] = signal
-
-
 class CommandProcessor:
     """Processes inbound Telegram updates, handles security, and runs commands."""
 
@@ -67,23 +48,30 @@ class CommandProcessor:
         self,
         bus: Any,
         config: Any,
-        cache: CommandCache,
+        signal_stores: Optional["SignalStores"] = None,
         execution_store: Optional["ExecutionStore"] = None,
         fundamental_agent: Optional["FundamentalAgent"] = None,
         data_store: Optional["DataStore"] = None,
+        display_prefs: Optional["DisplayPrefs"] = None,
     ) -> None:
         self.bus = bus
         self.config = config
-        self.cache = cache
+        self.signal_stores = signal_stores
         self.execution_store = execution_store
         self.fundamental_agent = fundamental_agent
         self.data_store = data_store
+        self.display_prefs = display_prefs
 
         # Track confirmation states: user_id -> (command_name, trigger_time)
         self._pending_confirmations: Dict[int, tuple[str, datetime]] = {}
         # Chat Q&A mode: user_id -> last activity time
         self._chat_mode_users: Dict[int, datetime] = {}
         self._chat_history: Dict[int, List[dict[str, str]]] = {}
+
+    def _chart_timezone(self) -> str:
+        if self.display_prefs is not None:
+            return self.display_prefs.get_chart_timezone()
+        return "UTC"
 
     async def handle_message(self, message: Dict[str, Any], send_callback: Any) -> None:
         """Main routing function for inbound authorized message text."""
@@ -138,10 +126,17 @@ class CommandProcessor:
             )
 
     def _portfolio_state(self) -> Optional[PortfolioState]:
-        p_state = self.cache.portfolio_state
-        if p_state is None and self.execution_store is not None:
-            p_state = self.execution_store.get_latest_portfolio()
-        return p_state
+        store = self.execution_store
+        if store is None and self.signal_stores is not None:
+            store = self.signal_stores.execution
+        if store is not None:
+            return store.get_latest_portfolio()
+        return None
+
+    def _health_states(self) -> dict[str, SystemHealthEvent]:
+        if self.signal_stores is None:
+            return {}
+        return self.signal_stores.health.get_all()
 
     def _execution_mode_label(self) -> str:
         mode_val = self.config.core.execution_mode
@@ -149,7 +144,7 @@ class CommandProcessor:
 
     def _health_counts(self) -> tuple[int, int, int]:
         ok = degraded = down = 0
-        for event in self.cache.health_states.values():
+        for event in self._health_states().values():
             if event.status == HealthStatus.OK:
                 ok += 1
             elif event.status == HealthStatus.DEGRADED:
@@ -159,23 +154,28 @@ class CommandProcessor:
         return ok, degraded, down
 
     def _trading_halted(self) -> bool:
-        manual = self.cache.health_states.get("MANUAL_CONTROL")
+        manual = self._health_states().get("MANUAL_CONTROL")
         return manual is not None and manual.status == HealthStatus.DOWN
 
     def _next_upcoming_headline(self) -> Optional[str]:
-        for sig in self.cache.fundamental_signals.values():
+        if self.signal_stores is None:
+            return None
+        for sig in self.signal_stores.fundamental.get_latest_by_instrument(as_of=now()).values():
             headline = sig.source_headline or ""
             if headline.startswith("Upcoming:"):
                 return headline
         return None
 
     def _last_trade_signal_line(self) -> Optional[str]:
-        if not self.cache.trade_signals:
+        if self.signal_stores is None:
             return None
-        sig = self.cache.trade_signals[-1]
+        signals = self.signal_stores.trade.list_recent(limit=1, as_of=now())
+        if not signals:
+            return None
+        sig = signals[0]
         emoji = "🟢" if sig.direction == Direction.LONG else "🔴" if sig.direction == Direction.SHORT else "⚪"
         side = sig.suggested_side.value.upper() if sig.suggested_side else "NEUTRAL"
-        time_str = sig.timestamp.strftime("%H:%M UTC")
+        time_str = format_chart_time(sig.timestamp, self._chart_timezone())
         return (
             f"{emoji} <b>{sig.instrument.value}</b> {side} "
             f"({int(sig.confidence * 100)}%) · {time_str}"
@@ -205,7 +205,7 @@ class CommandProcessor:
         name = user.get("first_name") or user.get("username") or "trader"
         env_label = getattr(self.config, "env", "dev")
         mode = self._execution_mode_label()
-        ts = now().strftime("%Y-%m-%d %H:%M UTC")
+        ts = format_chart_time(now(), self._chart_timezone(), include_date=True)
 
         p_state = self._portfolio_state()
         equity_line = "Portfolio: warming up…"
@@ -222,7 +222,7 @@ class CommandProcessor:
             health_bits.append(f"{degraded} degraded")
         if down:
             health_bits.append(f"{down} down")
-        health_line = " · ".join(health_bits) if self.cache.health_states else "awaiting heartbeats"
+        health_line = " · ".join(health_bits) if self._health_states() else "awaiting heartbeats"
 
         trading_line = (
             "🛑 <b>Trading HALTED</b> (manual)"
@@ -307,8 +307,8 @@ class CommandProcessor:
 
         await send_callback(
             "💬 <b>Chat mode ON</b>\n\n"
-            "Ask me anything about your portfolio, calendar events, news, "
-            "trade signals, or system health. I read live data from the database.\n\n"
+            "OpenRouter LLM chat with live DB context (portfolio, signals, news, calendar). "
+            "Ask for lists, analysis, or follow-ups — all handled by the model.\n\n"
             "Commands still work (e.g. /portfolio). "
             "Type <b>/message off</b> or <b>/done</b> to exit."
         )
@@ -333,26 +333,34 @@ class CommandProcessor:
 
         synthesizer = self.fundamental_agent.synthesizer
         context = build_trading_context(
-            self.cache,
             self.config,
+            signal_stores=self.signal_stores,
             data_store=self.data_store,
             execution_store=self.execution_store,
+            tz_name=self._chart_timezone(),
         )
         history = self._chat_history.get(user_id, [])
 
         await send_callback("💬 Thinking…")
+
+        from src.notifier.chat import _is_chat_error_response
 
         answer = await answer_trading_question(
             text,
             context,
             synthesizer,
             history=history,
+            signal_stores=self.signal_stores,
+            execution_store=self.execution_store,
+            data_store=self.data_store,
+            tz_name=self._chart_timezone(),
         )
         await send_callback(format_chat_reply(answer))
 
-        history.append({"role": "user", "content": text})
-        history.append({"role": "assistant", "content": answer})
-        self._chat_history[user_id] = history[-(MAX_HISTORY_TURNS * 2) :]
+        if not _is_chat_error_response(answer):
+            history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": answer})
+            self._chat_history[user_id] = history[-(MAX_HISTORY_TURNS * 2) :]
 
     async def _cmd_status(self, send_callback: Any) -> None:
         mode = self._execution_mode_label()
@@ -367,7 +375,7 @@ class CommandProcessor:
 
         health_lines = []
         for div in divisions:
-            event = self.cache.health_states.get(div)
+            event = self._health_states().get(div)
             status_str = event.status.value.upper() if event else "UNKNOWN"
             emoji = "🟢" if status_str == "OK" else "⚠️" if status_str == "DEGRADED" else "🚨" if status_str == "DOWN" else "⚪"
             health_lines.append(f"{emoji} {div[4:]}: <b>{status_str}</b>")
@@ -433,16 +441,21 @@ class CommandProcessor:
             except ValueError:
                 pass
 
-        signals = self.cache.trade_signals[-count:]
+        if self.signal_stores is None:
+            await send_callback("📭 Trade signal store unavailable.")
+            return
+        signals = self.signal_stores.trade.list_recent(limit=count, as_of=now())
         if not signals:
-            await send_callback("📭 No trade signals recorded in cache.")
+            await send_callback("📭 No trade signals recorded yet.")
             return
 
         lines = [f"📊 <b>Last {len(signals)} Trade Signals:</b>"]
         for s in reversed(signals):
             emoji = "🟢" if s.direction == Direction.LONG else "🔴" if s.direction == Direction.SHORT else "⚪"
             side = s.suggested_side.value.upper() if s.suggested_side else "NEUTRAL"
-            time_str = s.timestamp.strftime("%m-%d %H:%M")
+            time_str = format_chart_time(
+                s.timestamp, self._chart_timezone(), include_date=True
+            )
             lines.append(
                 f"[{time_str}] {emoji} <b>{s.instrument.value}</b>: {side} (conf: {int(s.confidence*100)}%)"
             )
@@ -450,18 +463,23 @@ class CommandProcessor:
         await send_callback("\n".join(lines))
 
     async def _cmd_fundamental(self, args: List[str], send_callback: Any) -> None:
+        if self.signal_stores is None:
+            await send_callback("📭 Fundamental signal store unavailable.")
+            return
+
+        latest = self.signal_stores.fundamental.get_latest_by_instrument(as_of=now())
         if args:
             inst_query = args[0].upper().replace("/", "").replace("_", "")
-            signal = self.cache.fundamental_signals.get(inst_query)
+            signal = latest.get(inst_query)
             if not signal:
-                await send_callback(f"📭 No fundamental signal cache for instrument: {inst_query}")
+                await send_callback(f"📭 No fundamental signal for instrument: {inst_query}")
                 return
             signals_to_show = [signal]
         else:
-            signals_to_show = list(self.cache.fundamental_signals.values())
+            signals_to_show = list(latest.values())
 
         if not signals_to_show:
-            await send_callback("📭 No fundamental signals recorded in cache.")
+            await send_callback("📭 No fundamental signals recorded yet.")
             return
 
         lines = ["📰 <b>Latest Fundamental Views:</b>"]

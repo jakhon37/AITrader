@@ -38,7 +38,7 @@ from datetime import timedelta
 
 from src.core.contracts import BusChannel, Instrument, HealthStatus, SystemHealthEvent
 from src.core.clock import now
-from src.data.models import RawCalendarEvent
+from src.data.models import NewsArticle, RawCalendarEvent
 
 
 @pytest.fixture
@@ -134,6 +134,49 @@ def test_portfolio_state_endpoint(client):
     assert "open_positions" in data
 
 
+def test_news_endpoint_all_instruments(client):
+    """GET /api/data/news returns ingested headlines without requiring instrument."""
+    store = client.app.state.data_store
+    published = now() - timedelta(hours=1)
+    store.write_news(
+        [
+            NewsArticle(
+                article_id="news_api_test_1",
+                headline="Gold rallies on safe-haven demand",
+                url="https://example.com/gold",
+                source="finnhub",
+                published_at=published,
+                instruments=["XAUUSD"],
+            ),
+            NewsArticle(
+                article_id="news_api_test_2",
+                headline="ECB hints at further tightening",
+                url="https://example.com/ecb",
+                source="reuters_rss",
+                published_at=published,
+                instruments=["EURUSD"],
+            ),
+        ]
+    )
+
+    start = (now() - timedelta(hours=48)).isoformat()
+    end = now().isoformat()
+    response = client.get(f"/api/data/news?start={start}&end={end}")
+    assert response.status_code == 200
+    data = response.json()
+    headlines = {row["headline"] for row in data}
+    assert "Gold rallies on safe-haven demand" in headlines
+    assert "ECB hints at further tightening" in headlines
+
+    filtered = client.get(
+        f"/api/data/news?start={start}&end={end}&instrument=EURUSD"
+    )
+    assert filtered.status_code == 200
+    eur_only = filtered.json()
+    assert len(eur_only) == 1
+    assert eur_only[0]["headline"] == "ECB hints at further tightening"
+
+
 def test_upcoming_calendar_endpoint(client):
     """Test GET /api/data/calendar/upcoming returns enriched upcoming events."""
     store = client.app.state.data_store
@@ -162,6 +205,54 @@ def test_upcoming_calendar_endpoint(client):
     assert row["status"] == "upcoming"
     assert row["minutes_until"] >= 110
     assert row["volatility_risk"] == "high"
+
+
+def test_upcoming_calendar_uses_wall_clock_without_replay(client):
+    """Calendar dashboard must not follow a stale replay clock after replay ends."""
+    from datetime import datetime, timezone
+
+    from src.core.clock import LiveClock, ReplayClock, set_clock
+
+    store = client.app.state.data_store
+    wall_now = datetime.now(timezone.utc)
+    release_at = wall_now + timedelta(hours=3)
+    store.write_calendar_events(
+        [
+            RawCalendarEvent(
+                event_id="wall_clock_test",
+                name="US Retail Sales",
+                timestamp=release_at,
+                impact="medium",
+                instruments=["EURUSD"],
+                forecast=0.4,
+                previous=0.3,
+            )
+        ]
+    )
+
+    set_clock(ReplayClock(datetime(2024, 8, 29, tzinfo=timezone.utc)))
+    client.app.state.active_replay_session = None
+
+    response = client.get("/api/data/calendar/upcoming?hours=48&min_impact=low")
+    assert response.status_code == 200
+    data = response.json()
+    assert any(item["event_id"] == "wall_clock_test" for item in data)
+
+    set_clock(LiveClock())
+
+
+def test_chart_timezone_preference_round_trip(client):
+    """PUT/GET chart timezone preference persists for Telegram formatting."""
+    put = client.put(
+        "/api/preferences/chart-timezone",
+        json={"timezone": "Asia/Seoul"},
+    )
+    assert put.status_code == 200
+    assert put.json()["timezone"] == "Asia/Seoul"
+
+    get = client.get("/api/preferences/chart-timezone")
+    assert get.status_code == 200
+    assert get.json()["timezone"] == "Asia/Seoul"
 
 
 def test_signals_endpoints(client):

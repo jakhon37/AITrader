@@ -10,7 +10,7 @@ import pytest
 
 from src.core.contracts import ExecutionMode, PortfolioState
 from src.execution.store import ExecutionStore
-from src.notifier.commands import CommandCache, CommandProcessor
+from src.notifier.commands import CommandProcessor
 
 
 @pytest.mark.asyncio
@@ -34,7 +34,6 @@ async def test_portfolio_command_reads_from_execution_store(tmp_path: Path) -> N
     processor = CommandProcessor(
         bus=MagicMock(),
         config=MagicMock(core=MagicMock(execution_mode=ExecutionMode.PAPER)),
-        cache=CommandCache(),
         execution_store=store,
     )
     sent: list[str] = []

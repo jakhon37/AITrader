@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from fastapi import APIRouter, Request
 
-from src.api import state
+from src.ops.paper_soak import build_soak_report
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -20,9 +20,10 @@ def _pipeline_component(app: object, attr: str) -> dict[str, object]:
 
 
 @router.get("")
-async def get_health() -> Dict[str, Any]:
-    """Retrieve system health aggregated by division."""
-    latest_events = state.health_history
+async def get_health(request: Request) -> Dict[str, Any]:
+    """Retrieve system health aggregated by division (from SQLite)."""
+    stores = getattr(request.app.state, "signal_stores", None)
+    latest_events = stores.health.get_all().values() if stores else []
     if not latest_events:
         return {
             "status": "ok",
@@ -72,6 +73,32 @@ async def get_ops_health(request: Request) -> dict[str, object]:
             "message": "First probe cycle not complete yet",
         }
     return snapshot
+
+
+@router.get("/soak")
+async def get_soak_health(request: Request) -> dict[str, object]:
+    """Tier 4: Paper trading soak progress (target 14 days)."""
+    app = request.app
+    scheduler = getattr(app.state, "scheduler", None)
+    pipeline_running = bool(getattr(scheduler, "_running", False)) if scheduler else False
+
+    ops_status: str | None = None
+    monitor = getattr(app.state, "ops_monitor", None)
+    if monitor is not None:
+        snap = monitor.get_snapshot()
+        if snap:
+            ops_status = str(snap.get("status"))
+
+    data_dir = None
+    app_config = getattr(app.state, "app_config", None)
+    if app_config is not None:
+        data_dir = getattr(getattr(app_config, "data", None), "data_dir", None)
+
+    return build_soak_report(
+        data_dir=data_dir,
+        pipeline_running=pipeline_running,
+        ops_status=ops_status,
+    )
 
 
 @router.get("/pipeline")

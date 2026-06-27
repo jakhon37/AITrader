@@ -60,6 +60,8 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
         transformers \
         huggingface-hub \
         httpx \
+        feedparser \
+        beautifulsoup4 \
         fastapi \
         uvicorn \
         websockets

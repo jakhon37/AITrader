@@ -19,11 +19,8 @@ from typing import Dict, List, Optional
 import httpx
 
 from src.core.logging import get_logger
-from src.fundamental.synthesizer import (
-    get_available_free_models,
-    PREFERRED_FREE_MODELS,
-    select_available_free_model,
-)
+from src.fundamental.openrouter_models import mark_model_failed, select_validated_free_model
+from src.fundamental.synthesizer import PREFERRED_FREE_MODELS, get_available_free_models
 
 _log = get_logger("D03-FUNDAMENTAL")
 
@@ -202,12 +199,17 @@ class SentimentScorer:
         # Dynamic model selection for availability
         if not self._openrouter_model:
             try:
-                model_to_use = await select_available_free_model(
+                model_to_use = await select_validated_free_model(
+                    self._openrouter_api_key,
                     preferred=self._openrouter_preferred,
-                    api_key=self._openrouter_api_key,
+                    purpose="sentiment",
                 )
             except Exception:
+                model_to_use = None
+            if not model_to_use:
                 model_to_use = self._openrouter_preferred[0]
+            else:
+                self._openrouter_model = model_to_use
         else:
             model_to_use = self._openrouter_model
 
@@ -246,8 +248,8 @@ class SentimentScorer:
                         score = float(data.get("score", 0.0))
                         scores.append(max(-1.0, min(1.0, score)))
                     else:
-                        if resp.status_code in (400, 404):
-                            # model unavailable -> next call will reselect
+                        if resp.status_code in (400, 404, 429):
+                            mark_model_failed(model_to_use)
                             self._openrouter_model = None
                         _log.warning(
                             "openrouter_sentiment_error_code",

@@ -369,19 +369,24 @@ async def list_data_instruments() -> Dict[str, Any]:
 @router.get("/news")
 async def get_news(
     request: Request,
-    instrument: str = Query(..., description="EURUSD, GBPUSD, etc."),
     start: str = Query(..., description="ISO 8601 start timestamp"),
     end: str = Query(..., description="ISO 8601 end timestamp"),
+    instrument: Optional[str] = Query(
+        None,
+        description="EURUSD, GBPUSD, etc. Omit or pass 'all' for every instrument.",
+    ),
 ) -> List[Dict[str, Any]]:
-    """Retrieve historical news articles for an instrument."""
+    """Retrieve historical news articles for an instrument (or all instruments)."""
     data_store = getattr(request.app.state, "data_store", None)
     if not data_store:
         raise HTTPException(status_code=500, detail="DataStore not initialized.")
 
-    try:
-        inst = Instrument(instrument.upper())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    inst: Optional[Instrument] = None
+    if instrument and instrument.lower() != "all":
+        try:
+            inst = Instrument(instrument.upper())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     start_dt = parse_datetime(start)
     end_dt = parse_datetime(end)
@@ -440,7 +445,9 @@ async def get_upcoming_calendar(
     if min_impact not in ("low", "medium", "high"):
         raise HTTPException(status_code=400, detail="min_impact must be low, medium, or high")
 
-    current = now()
+    # Calendar events are real-world scheduled releases — use wall clock unless replay is active.
+    replay_active = getattr(request.app.state, "active_replay_session", None) is not None
+    current = now() if replay_active else datetime.now(timezone.utc)
     end = current + timedelta(hours=hours)
 
     try:
